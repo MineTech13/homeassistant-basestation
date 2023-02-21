@@ -60,16 +60,34 @@ class BasestationSwitch(SwitchEntity):
         asyncio.run(self.async_update())
 
     async def async_turn_on(self):
-        async with BleakClient(self.get_ble_device()) as client:
-            await client.write_gatt_char(PWR_CHARACTERISTIC, PWR_ON)
+        try:
+            async with BleakClient(self.get_ble_device(), timeout=30) as client:
+                await client.write_gatt_char(PWR_CHARACTERISTIC, PWR_ON)
+        except asyncio.exceptions.TimeoutError:
+            _LOGGER.debug(
+                "Timeout occurred when trying to turn on basestation '%s'.",
+                self._mac,
+            )
 
     async def async_turn_off(self):
-        async with BleakClient(self.get_ble_device()) as client:
-            await client.write_gatt_char(PWR_CHARACTERISTIC, PWR_STANDBY)
+        try:
+            async with BleakClient(self.get_ble_device(), timeout=30) as client:
+                await client.write_gatt_char(PWR_CHARACTERISTIC, PWR_STANDBY)
+        except asyncio.exceptions.TimeoutError:
+            _LOGGER.debug(
+                "Timeout occurred when trying to turn off basestation '%s'.",
+                self._mac,
+            )
 
     async def async_update(self):
-        async with BleakClient(self.get_ble_device()) as client:
-            self._is_on = await client.read_gatt_char(PWR_CHARACTERISTIC) != PWR_STANDBY
+        try:
+            async with BleakClient(self.get_ble_device(), timeout=30) as client:
+                self._is_on = await client.read_gatt_char(PWR_CHARACTERISTIC) != PWR_STANDBY
+        except asyncio.exceptions.TimeoutError:
+            _LOGGER.debug(
+                "Timeout occurred when trying to update basestation '%s'.",
+                self._mac,
+            )
 
     def get_ble_device(self):
         return bluetooth.async_ble_device_from_address(self._hass, self._mac)
