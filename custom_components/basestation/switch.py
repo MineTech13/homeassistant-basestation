@@ -90,4 +90,4 @@ class BasestationSwitch(SwitchEntity):
             )
 
     def get_ble_device(self):
-        return bluetooth.async_ble_device_from_address(self._hass, self._mac)
+        return bluetooth.async_ble_device_from_address(self._hass, str(self._mac))
