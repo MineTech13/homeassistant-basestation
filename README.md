@@ -1,7 +1,7 @@
 # Valve Basestation integration for Homeassistant
 
-This is a Combined fork from https://github.com/jariz/homeassistant-basestation and https://github.com/TCL987/homeassistant-basestation
 Read and manage power states for your Valve Index® Base Stations (also referred to as 'Lighthouse V2') through [BLE](https://en.wikipedia.org/wiki/Bluetooth_Low_Energy).
+This is a Combined fork from [@jariz](https://github.com/jariz/homeassistant-basestation), [@TCL987](https://github.com/TCL987/homeassistant-basestation) and the Patch from [@Azelphur](https://github.com/Azelphur/homeassistant-basestation)
 
 ![](https://jari.lol/TYc7q1qt9E.png)  
 
