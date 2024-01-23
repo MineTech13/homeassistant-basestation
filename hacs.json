@@ -1,5 +1,6 @@
 {
     "name": "Valve Index Basestation",
+    "homeassistant": "2024.1.0",
     "domains": [
       "switch"
     ],
