@@ -1,5 +1,6 @@
 # Valve Basestation integration for Homeassistant
 
+This is a Combined fork from https://github.com/jariz/homeassistant-basestation and https://github.com/TCL987/homeassistant-basestation
 Read and manage power states for your Valve Index® Base Stations (also referred to as 'Lighthouse V2') through [BLE](https://en.wikipedia.org/wiki/Bluetooth_Low_Energy).
 
 ![](https://jari.lol/TYc7q1qt9E.png)  
@@ -8,7 +9,7 @@ Read and manage power states for your Valve Index® Base Stations (also referred
 
 - Ensure [HACS](https://hacs.xyz) is installed.
 - Go to Community -> Frontend -> press the three dots (top right corner of screen) -> Custom repositories and add the following information: 
-  - Add custom repository URL: https://github.com/jariz/homeassistant-basestation 
+  - Add custom repository URL: https://github.com/minetech13/homeassistant-basestation 
   - Category: `Integration` 
   - Press add.
   - Now in the repository overview, click install next to this repo.
@@ -87,6 +88,5 @@ switch:
 
 ## Final notes
 
-- Yes, BLE does not conmmunicate well over long range.  
-  If this integration becomes any popular, ~~I'm willing to write a gateway app [like miflora has](https://github.com/ThomDietrich/miflora-mqtt-daemon) at some point.~~. I more or less did this with ESP32: [read here](https://blog.jari.io/tracking-valve-index-basestation-power-state-with-esphome/).
+- Yes, BLE does not conmmunicate well over long range.
 - Largely inspired by [the miflora integration](https://github.com/home-assistant/core/tree/dev/homeassistant/components/miflora), thanks!
