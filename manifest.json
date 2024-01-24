@@ -1,9 +1,0 @@
-{
-    "domain": "valve_index_basestation",
-    "name": "Valve Index Basestation",
-    "version": "v1.1.0",
-    "domains": [
-        "switch"
-      ],
-    "iot_class": ["Local Polling", "Local Push"]
-  }
