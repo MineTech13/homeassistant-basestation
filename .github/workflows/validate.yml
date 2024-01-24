@@ -1,4 +1,4 @@
-name: HACS Action
+name: Repo Validation
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
 
 jobs:
   hacs:
-    name: HACS Action
+    name: HACS Validation
     runs-on: "ubuntu-latest"
     steps:
       - name: HACS Action
@@ -16,6 +16,7 @@ jobs:
         with:
           category: "integration"
   hassfest:
+    name: hassfest Validation
     runs-on: "ubuntu-latest"
     steps:
         - uses: "actions/checkout@v4"
