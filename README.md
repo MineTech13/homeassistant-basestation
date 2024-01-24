@@ -6,7 +6,7 @@ This is a Combined fork from [@jariz](https://github.com/jariz/homeassistant-bas
 ![](https://jari.lol/TYc7q1qt9E.png)  
 
 ## Installation
-
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=minetech13&repository=homeassistant-basestation&category=integration)
 - Ensure [HACS](https://hacs.xyz) is installed.
 - Go to Community -> Frontend -> press the three dots (top right corner of screen) -> Custom repositories and add the following information: 
   - Add custom repository URL: https://github.com/minetech13/homeassistant-basestation 
