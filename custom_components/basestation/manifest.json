@@ -1,11 +1,11 @@
 {
   "domain": "basestation",
   "name": "Valve Index Basestation",
-  "version": "1.1.0",
-  "config_flow": false,
-  "documentation": "https://github.com/minetech13/homeassistant-basestation",
-  "issue_tracker": "https://github.com/minetech13/homeassistant-basestation/issues",
   "codeowners": ["@jariz", "@TCL987", "@MineTech13"],
+  "config_flow": false,
+  "dependencies": ["bluetooth"],
+  "documentation": "https://github.com/minetech13/homeassistant-basestation",
   "iot_class": "local_polling",
-  "dependencies": ["bluetooth"]
+  "issue_tracker": "https://github.com/minetech13/homeassistant-basestation/issues",
+  "version": "1.1.0"
 }
