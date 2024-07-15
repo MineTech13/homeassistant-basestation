@@ -16,7 +16,7 @@ def setup_platform(hass, config, add_entities, discovery_info=None):
     """Set up the sensor platform."""
     mac = config.get("mac")
     name = config.get("name")
-    add_entities([BasestationSwitch(hass, mac, name)])
+    add_entities([BasestationSwitch(hass, mac, name)], update_before_add=True)
 
 
 class BasestationSwitch(SwitchEntity):
@@ -28,11 +28,21 @@ class BasestationSwitch(SwitchEntity):
         self._mac = mac
         self._name = name
         self._is_on = False
+        self._is_available = False
 
     @property
     def icon(self):
         """Return the icon."""
         return "mdi:virtual-reality"
+
+    @property
+    def should_poll(self):
+        return True
+
+    @property
+    def available(self):
+        """Return the connection status of this switch"""
+        return self._is_available
 
     @property
     def is_on(self):
@@ -84,6 +94,8 @@ class BasestationSwitch(SwitchEntity):
             async with BleakClient(self.get_ble_device(), timeout=30) as client:
                 self._is_on = await client.read_gatt_char(PWR_CHARACTERISTIC) != PWR_STANDBY
         except asyncio.exceptions.TimeoutError:
+            self._is_on = False
+            self._is_available = False
             _LOGGER.debug(
                 "Timeout occurred when trying to update basestation '%s'.",
                 self._mac,
