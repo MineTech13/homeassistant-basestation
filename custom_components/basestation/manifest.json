@@ -2,7 +2,7 @@
   "domain": "basestation",
   "name": "Valve Index Basestation",
   "codeowners": ["@jariz", "@TCL987", "@MineTech13"],
-  "config_flow": false,
+  "config_flow": true,
   "dependencies": ["bluetooth"],
   "documentation": "https://github.com/minetech13/homeassistant-basestation",
   "iot_class": "local_polling",
