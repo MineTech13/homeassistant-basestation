@@ -1,0 +1,45 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Valve Index Basestation Setup",
+        "description": "Choose how you want to set up your basestation",
+        "data": {
+          "setup_method": "Setup Method"
+        }
+      },
+      "automatic": {
+        "title": "Automatic Setup",
+        "description": "Enter the prefix to identify your basestations. All matching devices will be automatically discovered and added.",
+        "data": {
+          "discovery_prefix": "Device Name Prefix"
+        }
+      },
+      "selection": {
+        "title": "Select Device",
+        "description": "Choose your basestation from the list of discovered devices",
+        "data": {
+          "device_selection": "Device",
+          "name": "Custom Name (Optional)"
+        }
+      },
+      "manual": {
+        "title": "Manual Setup",
+        "description": "Enter the MAC address of your basestation",
+        "data": {
+          "mac": "MAC Address",
+          "name": "Custom Name (Optional)"
+        }
+      }
+    },
+    "error": {
+      "invalid_mac": "Invalid MAC address format",
+      "unknown": "Unexpected error occurred"
+    },
+    "abort": {
+      "already_configured": "Device is already configured",
+      "already_auto_configured": "Automatic discovery is already configured",
+      "no_devices_found": "No Bluetooth devices found"
+    }
+  }
+}
