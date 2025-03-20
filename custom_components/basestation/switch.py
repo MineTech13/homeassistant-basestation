@@ -1,15 +1,19 @@
 """The basestation switch."""
 
-from bleak import BleakClient
-from homeassistant.components.switch import SwitchEntity
-from homeassistant.components import bluetooth
 import asyncio
+import logging
+
+from bleak import BleakClient
+from homeassistant.components import bluetooth
+from homeassistant.components.switch import SwitchEntity
 
 from .const import (
     PWR_CHARACTERISTIC,
     PWR_ON,
     PWR_STANDBY,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def setup_platform(hass, config, add_entities, discovery_info=None):
