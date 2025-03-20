@@ -14,79 +14,87 @@ This is a Combined fork from [@jariz](https://github.com/jariz/homeassistant-bas
   - Press add.
   - Now in the repository overview, click install next to this repo.
 
-## Will it run?
+## Requirements
 
-Before configuring Home Assistant you need a Bluetooth backend and the MAC address of your basestation. Depending on your operating system, you may have to configure the proper Bluetooth backend for your system:
+Before configuring Home Assistant you need a Bluetooth backend. Depending on your operating system, you may have to configure the proper Bluetooth backend for your system:
 
 - On [Home Assistant](https://home-assistant.io/hassio/installation/): integration works out of the box.
 - On [Home Assistant Container](https://home-assistant.io/docs/installation/docker/): Works out of the box with `--net=host` and properly configured Bluetooth on the host.
 - On other Linux systems:
-  - Install the `bluepy` library (via pip). When using a virtual environment, make sure to install the library in the right one.
-
-## Scan for devices
-
-Start a scan to determine the MAC addresses of your basestations (you can identify a basestation by looking for entries starting with `LHB-`, for example: `LHB-F27AE376`) using this command:
-
-```bash
-$ sudo hcitool lescan
-LE Scan ...
-1B:BE:05:0D:B0:5C (unknown)
-F3:C7:68:BB:23:0B LHB-60B5777F
-F7:8A:B0:FD:08:B5 LHB-F27AE376
-[...]
-```
-
-Or, if your distribution is using bluetoothctl use the following commands:
-
-```bash
-$ bluetoothctl
-[bluetooth]# scan on
-[NEW] Controller <your Bluetooth adapter> [default]
-[NEW] Device F3:C7:68:BB:23:0B LHB-60B5777F
-```
-
-If you can't use `hcitool` or `bluetoothctl` but have access to an Android phone you can try `BLE Scanner` or similar scanner applications from the Play Store to easily find your sensor MAC address. If you are using Windows 10, try the `Microsoft Bluetooth LE Explorer` app from the Windows Store.
+  - Ensure Bluetooth is properly configured and enabled
 
 ## Configuration
 
-To use your basestation(s) in your installation, add the following to your `configuration.yaml` file:
+There are three ways to configure your base stations:
 
-```yaml
-# Example configuration.yaml entry
-switch:
-  - platform: basestation
-    mac: "xx:xx:xx:xx:xx:xx"
+### 1. Automatic Setup (Recommended)
+- Go to Settings -> Devices & Services
+- Click "Add Integration"
+- Search for "Valve Index Basestation"
+- Select "Automatic Setup"
+- Enter the device prefix (defaults to "LHB-")
+- The integration will automatically discover and add all matching base stations
+- New base stations will be automatically discovered and added
+
+### 2. Selection from Discovered Devices
+- Go to Settings -> Devices & Services
+- Click "Add Integration"
+- Search for "Valve Index Basestation"
+- Select "Select from discovered devices"
+- Choose your base station from the list of discovered Bluetooth devices
+- Optionally provide a custom name
+
+### 3. Manual Setup
+- Go to Settings -> Devices & Services
+- Click "Add Integration"
+- Search for "Valve Index Basestation"
+- Select "Manual Setup"
+- Enter the MAC address of your base station
+- Optionally provide a custom name
+
+## Finding Your Base Station MAC Address
+
+If you need to find your base station's MAC address, you can use one of these methods:
+
+```bash
+# Using hcitool
+$ sudo hcitool lescan
+LE Scan ...
+F3:C7:68:BB:23:0B LHB-60B5777F
+F7:8A:B0:FD:08:B5 LHB-F27AE376
+
+# Using bluetoothctl
+$ bluetoothctl
+[bluetooth]# scan on
+[NEW] Device F3:C7:68:BB:23:0B LHB-60B5777F
 ```
 
-### More expansive example
+Alternatively:
+- Android users can use 'BLE Scanner' from the Play Store
+- Windows users can use 'Microsoft Bluetooth LE Explorer' from the Windows Store
 
-Since you'll probably be adding more than 1 basestation, it's a good idea to use the [group integration](https://www.home-assistant.io/integrations/group) to group them together and control them all at once.
+## Automation Ideas
 
-```yaml
-group:
-  basestations:
-    name: Basestations
-    entities:
-      - switch.lhb_1
-      - switch.lhb_2
+- Turn the airco on when your VR equipment activates
+- Turn your base stations off/on when you turn off/on the lights
+- Turn your base stations off if there's no motion detected in the room
+- Turn off base stations when you leave the house
+- Start your computer (wake on lan), VR equipment, and screen (power plug) all at once
 
-switch:
-  - platform: basestation
-    mac: "xx:xx:xx:xx:xx:xx"
-    name: "LHB 1"
-  - platform: basestation
-    mac: "xx:xx:xx:xx:xx:xx"
-    name: "LHB 2"
-```
+## Grouping Base Stations
 
-## Automation ideas
+You can use Home Assistant's built-in Groups feature to control multiple base stations together:
 
-- Turn the airco on when your VR equipment activates.
-- Turn your basestations off/on when you turn off/on the lights
-- Turn your basestations off if there's no motion detected in the room anymore, or if you've left the house.
-- Start your computer (wake on lan), VR equipment, and screen (power plug) all at once.
+1. Go to Settings -> Devices & Services
+2. Click on "Helpers"
+3. Click the "+ CREATE HELPER" button
+4. Select "Group"
+5. Add all your base station switches to the group
 
-## Final notes
+## Notes
 
-- Yes, BLE does not conmmunicate well over long range.
-- Largely inspired by [the miflora integration](https://github.com/home-assistant/core/tree/dev/homeassistant/components/miflora), thanks!
+- BLE communication range is limited
+- The integration will automatically maintain connection and state
+- Base stations are represented as switches in Home Assistant
+- Automatic discovery will continue to look for new devices
+- Integration inspired by [the miflora integration](https://github.com/home-assistant/core/tree/dev/homeassistant/components/miflora)
