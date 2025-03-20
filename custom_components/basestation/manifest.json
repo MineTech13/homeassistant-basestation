@@ -7,5 +7,5 @@
   "documentation": "https://github.com/minetech13/homeassistant-basestation",
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/minetech13/homeassistant-basestation/issues",
-  "version": "1.1.0"
+  "version": "1.2.0"
 }
