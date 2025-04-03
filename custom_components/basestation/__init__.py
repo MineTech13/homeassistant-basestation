@@ -7,10 +7,13 @@ from datetime import timedelta
 from typing import Any
 
 from bleak import BleakScanner, BleakError
+import voluptuous as vol
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_MAC, CONF_NAME, EVENT_HOMEASSISTANT_STARTED
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.const import Platform
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.event import async_track_time_interval
 
 from .const import (
@@ -25,6 +28,10 @@ _LOGGER = logging.getLogger(__name__)
 
 # Define supported platforms
 PLATFORMS: list[Platform] = [Platform.SWITCH]
+
+# Define the config schema using config_entry_only_config_schema
+# This indicates the integration can only be set up from config entries (UI)
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
