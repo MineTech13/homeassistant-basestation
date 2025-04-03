@@ -1,9 +1,13 @@
 """Constants for the Valve Index Basestation integration."""
 
 DOMAIN = "basestation"
+
+# GATT Characteristic and values
 PWR_CHARACTERISTIC = "00001525-1212-EFDE-1523-785FEABCD124"
 PWR_ON = b"\x01"
 PWR_STANDBY = b"\x00"
+
+# Device detection
 DEFAULT_DEVICE_PREFIX = "LHB-"
 
 # Configuration
@@ -17,3 +21,7 @@ SETUP_MANUAL = "manual"
 
 # Discovery settings
 DISCOVERY_INTERVAL = 60  # seconds
+
+# Connection settings
+CONNECTION_RETRY_DELAY = 1  # seconds
+CONNECTION_MAX_RETRIES = 3

@@ -1,17 +1,17 @@
-"""The basestation switch."""
+"""The basestation switch component for Valve Index Base Stations."""
 import asyncio
 import logging
-from typing import Any
 from datetime import datetime, timedelta
+from typing import Any
 
-from bleak import BleakClient
+from bleak import BleakClient, BleakError
 from homeassistant.components import bluetooth
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_MAC, CONF_NAME
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
     DOMAIN,
@@ -24,16 +24,20 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-# Global connection semaphore to limit concurrent connections
-CONNECTION_SEMAPHORE = asyncio.Semaphore(2)  # Limit to 2 concurrent connections
+# Limit concurrent connections to prevent overwhelming the BLE adapter
+CONNECTION_SEMAPHORE = asyncio.Semaphore(2)
 CONNECTION_DELAY = 0.5  # Delay between connections in seconds
+CONNECTION_TIMEOUT = 10  # Connection timeout in seconds
+UPDATE_INTERVAL = 30  # Minimum time between updates in seconds
+MAX_RETRIES = 2  # Maximum connection retry attempts
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up the Basestation switch."""
+    """Set up the Basestation switch from a config entry."""
     if entry.data.get(CONF_SETUP_METHOD) == SETUP_AUTOMATIC:
         devices = entry.data.get("devices", [])
         _LOGGER.debug("Setting up %s automatically discovered devices", len(devices))
@@ -61,8 +65,9 @@ async def async_setup_entry(
 
     async_add_entities(entities, update_before_add=True)
 
+
 class BasestationSwitch(SwitchEntity):
-    """The basestation switch implementation."""
+    """Representation of a Valve Index Basestation switch."""
 
     def __init__(
         self,
@@ -72,36 +77,50 @@ class BasestationSwitch(SwitchEntity):
         entry_id: str,
         is_automatic: bool,
     ) -> None:
-        """Initialize the switch."""
-        self._hass = hass
+        """Initialize the switch entity."""
+        self.hass = hass
         self._mac = mac
-        self._name = name
         self._entry_id = entry_id
         self._is_automatic = is_automatic
         self._is_on = False
         self._is_available = False
         self._last_update = None
         self._state_changed = False
+        self._retry_count = 0
 
-        # Set unique ID
-        self._attr_unique_id = f"basestation_{mac}"
+        # Format MAC address consistently
+        self._mac_formatted = mac.replace(":", "").upper()
+        if len(self._mac_formatted) == 12:
+            self._mac_formatted = ":".join(
+                self._mac_formatted[i : i + 2] for i in range(0, 12, 2)
+            )
+
+        # Set unique ID for entity
+        self._attr_unique_id = f"basestation_{self._mac_formatted}"
+        
+        # Fix for duplicate naming: Use provided name or generate a default one
+        # Avoid using both _attr_name and name() property to prevent duplication
+        self._name = name if name else f"Valve Basestation {self._mac_formatted[-5:]}"
+        
+        # Set entity icon
+        self._attr_icon = "mdi:virtual-reality"
 
         # Set device info
         self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, mac)},
-            name=name or f"Valve Basestation {mac}",
+            identifiers={(DOMAIN, self._mac_formatted)},
+            name=self._name,
             manufacturer="Valve",
             model="Index Basestation",
-            via_device=(DOMAIN, mac),
         )
 
+        # Set parent device if part of automatic discovery
         if self._is_automatic:
             self._attr_device_info["via_device"] = (DOMAIN, f"auto_{entry_id}")
 
     @property
-    def icon(self) -> str:
-        """Return the icon."""
-        return "mdi:virtual-reality"
+    def name(self) -> str:
+        """Return the name of the switch."""
+        return self._name
 
     @property
     def available(self) -> bool:
@@ -113,77 +132,113 @@ class BasestationSwitch(SwitchEntity):
         """Return if the switch is currently on or off."""
         return self._is_on
 
-    @property
-    def name(self) -> str:
-        """Return the name of the switch."""
-        return self._name or f"Valve Basestation {self._mac}"
-
-    async def _connect_and_execute(self, operation: str, value: bytes = None) -> bool:
-        """Connect to device and execute operation with connection management."""
-        try:
-            async with CONNECTION_SEMAPHORE:
-                # Add delay to prevent overwhelming the BLE adapter
-                await asyncio.sleep(CONNECTION_DELAY)
-                
-                device = bluetooth.async_ble_device_from_address(
-                    self._hass, str(self._mac)
-                )
-                if not device:
-                    _LOGGER.debug("Device %s not found in bluetooth registry", self._mac)
-                    return False
-
-                async with BleakClient(device, timeout=10) as client:
-                    if operation == "write":
-                        await client.write_gatt_char(PWR_CHARACTERISTIC, value)
-                        return True
-                    elif operation == "read":
-                        value = await client.read_gatt_char(PWR_CHARACTERISTIC)
-                        return value
+    async def async_ble_operation(
+        self,
+        operation_type: str,
+        retry: bool = True,
+        value: bytes = None,
+    ) -> Any:
+        """Execute a BLE operation with proper connection management."""
+        result = None
+        
+        for attempt in range(MAX_RETRIES if retry else 1):
+            try:
+                async with CONNECTION_SEMAPHORE:
+                    # Add delay to prevent overwhelming the BLE adapter
+                    if attempt > 0:
+                        await asyncio.sleep(CONNECTION_DELAY * (2 ** attempt))
+                    else:
+                        await asyncio.sleep(CONNECTION_DELAY)
                     
-        except Exception as ex:
-            _LOGGER.debug(
-                "Failed to execute %s on basestation '%s': %s",
-                operation,
-                self._mac,
-                str(ex),
-            )
-            return False
+                    # Get BLE device from registry
+                    device = bluetooth.async_ble_device_from_address(
+                        self.hass, self._mac_formatted
+                    )
+                    if not device:
+                        _LOGGER.debug(
+                            "Device %s not found in Bluetooth registry", 
+                            self._mac_formatted
+                        )
+                        continue
+
+                    # Connect to device and execute operation
+                    async with BleakClient(
+                        device, timeout=CONNECTION_TIMEOUT
+                    ) as client:
+                        if operation_type == "write":
+                            await client.write_gatt_char(PWR_CHARACTERISTIC, value)
+                            result = True
+                        elif operation_type == "read":
+                            result = await client.read_gatt_char(PWR_CHARACTERISTIC)
+                        
+                        # Reset retry count on success
+                        self._retry_count = 0
+                        return result
+                        
+            except BleakError as err:
+                _LOGGER.debug(
+                    "BLE error on basestation '%s' (attempt %d/%d): %s",
+                    self._mac_formatted,
+                    attempt + 1,
+                    MAX_RETRIES if retry else 1,
+                    str(err),
+                )
+                
+            except Exception as ex:
+                _LOGGER.debug(
+                    "Failed to execute %s on basestation '%s': %s",
+                    operation_type,
+                    self._mac_formatted,
+                    str(ex),
+                )
+                
+            # Increment retry count
+            self._retry_count += 1
+            
+        return False
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the switch on."""
-        if await self._connect_and_execute("write", PWR_ON):
+        if await self.async_ble_operation("write", value=PWR_ON):
             self._is_on = True
             self._is_available = True
             self._state_changed = True
+            self._last_update = datetime.now()
         else:
             self._is_available = False
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the switch off."""
-        if await self._connect_and_execute("write", PWR_STANDBY):
+        if await self.async_ble_operation("write", value=PWR_STANDBY):
             self._is_on = False
             self._is_available = True
             self._state_changed = True
+            self._last_update = datetime.now()
         else:
             self._is_available = False
 
     async def async_update(self) -> None:
-        """Fetch new state data for the sensor."""
+        """Fetch new state data for the switch."""
         # Skip update if state was just changed manually
         if self._state_changed:
             self._state_changed = False
             return
 
-        # Skip update if last update was less than 30 seconds ago
+        # Skip update if last update was recent enough
         now = datetime.now()
         if (
             self._last_update
-            and now - self._last_update < timedelta(seconds=30)
+            and now - self._last_update < timedelta(seconds=UPDATE_INTERVAL)
             and self._is_available
         ):
             return
 
-        value = await self._connect_and_execute("read")
+        # Use less aggressive retry strategy for scheduled updates
+        value = await self.async_ble_operation(
+            "read", 
+            retry=(self._retry_count < MAX_RETRIES),
+        )
+        
         if value is not False:  # Check if operation was successful
             self._is_on = value != PWR_STANDBY
             self._is_available = True
