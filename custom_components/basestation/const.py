@@ -18,6 +18,7 @@ CONF_SETUP_METHOD = "setup_method"
 SETUP_AUTOMATIC = "automatic"
 SETUP_SELECTION = "selection"
 SETUP_MANUAL = "manual"
+SETUP_IMPORT = "import"  # Added for migration from YAML config
 
 # Discovery settings
 DISCOVERY_INTERVAL = 60  # seconds

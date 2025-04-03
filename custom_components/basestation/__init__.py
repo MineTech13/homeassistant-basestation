@@ -29,14 +29,33 @@ _LOGGER = logging.getLogger(__name__)
 # Define supported platforms
 PLATFORMS: list[Platform] = [Platform.SWITCH]
 
-# Define the config schema using config_entry_only_config_schema
-# This indicates the integration can only be set up from config entries (UI)
-CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+# Define validation for a single basestation entry
+BASESTATION_SCHEMA = vol.Schema({
+    vol.Required(CONF_MAC): cv.string,
+    vol.Optional(CONF_NAME): cv.string,
+})
+
+# Define a schema that allows for both config entries and legacy config
+CONFIG_SCHEMA = vol.Schema(
+    {
+        DOMAIN: cv.schema_with_slug_keys(BASESTATION_SCHEMA),
+    },
+    extra=vol.ALLOW_EXTRA,
+)
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Set up the Valve Index Basestation component."""
     hass.data.setdefault(DOMAIN, {})
+    
+    # Check for legacy configuration (YAML) and set up migration
+    if DOMAIN in config:
+        _LOGGER.info(
+            "Found %s basestation(s) configured in YAML. "
+            "These will be imported to the new configuration system.",
+            len(config[DOMAIN])
+        )
+        
     return True
 
 

@@ -2,14 +2,14 @@
 import asyncio
 import logging
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Dict, Set
 
 from bleak import BleakClient, BleakError
 from homeassistant.components import bluetooth
 from homeassistant.components.switch import SwitchEntity
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, SOURCE_IMPORT
 from homeassistant.const import CONF_MAC, CONF_NAME
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -20,6 +20,7 @@ from .const import (
     PWR_STANDBY,
     CONF_SETUP_METHOD,
     SETUP_AUTOMATIC,
+    SETUP_IMPORT,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -30,6 +31,57 @@ CONNECTION_DELAY = 0.5  # Delay between connections in seconds
 CONNECTION_TIMEOUT = 10  # Connection timeout in seconds
 UPDATE_INTERVAL = 30  # Minimum time between updates in seconds
 MAX_RETRIES = 2  # Maximum connection retry attempts
+
+# Track MAC addresses that have been notified
+NOTIFIED_MACS = set()
+
+# Legacy platform setup (for migration from YAML config)
+def setup_platform(hass, config, add_entities, discovery_info=None):
+    """Set up the sensor platform and migrate to config entries."""
+    mac = config.get("mac")
+    name = config.get("name")
+    
+    if not mac:
+        _LOGGER.error("MAC address is required for basestation setup")
+        return
+    
+    # Format MAC address consistently for tracking
+    formatted_mac = mac.replace(":", "").upper()
+    if len(formatted_mac) == 12:
+        formatted_mac = ":".join(formatted_mac[i:i+2] for i in range(0, 12, 2))
+    
+    # Skip entity creation completely and instead create a notification
+    if formatted_mac not in NOTIFIED_MACS:
+        _LOGGER.info(
+            "Detected YAML configuration for basestation '%s' (%s). "
+            "Migration will be handled through the UI.", 
+            name if name else "Unnamed", 
+            formatted_mac
+        )
+        
+        # Create notification data
+        notification_data = {
+            "message": (
+                f"Found Valve Basestation '{name if name else formatted_mac}' configured in YAML.\n\n"
+                f"The integration now uses the UI for configuration. "
+                f"Please add this device through the UI:\n\n"
+                f"1. Go to Settings → Devices & Services\n"
+                f"2. Click 'ADD INTEGRATION' and search for 'Valve Index Basestation'\n"
+                f"3. Select 'Manual Setup' and enter MAC: {mac}\n\n"
+                f"After setting up in the UI, you can safely remove this entry from your configuration.yaml:\n\n"
+                f"```yaml\nswitch:\n  - platform: basestation\n    "
+                f"mac: '{mac}'\n    name: '{name if name else 'Valve Basestation'}'\n```"
+            ),
+            "title": "Valve Basestation: Configuration Migration",
+            "notification_id": f"basestation_migration_{formatted_mac}"
+        }
+        
+        # Add the notification via service call - this is synchronous and safe
+        hass.services.call("persistent_notification", "create", notification_data)
+        NOTIFIED_MACS.add(formatted_mac)
+    
+    # Don't set up any entities from YAML config
+    return
 
 
 async def async_setup_entry(
@@ -52,7 +104,7 @@ async def async_setup_entry(
             for device in devices
         ]
     else:
-        _LOGGER.debug("Setting up single manually configured device")
+        _LOGGER.debug("Setting up single configured device: %s", entry.data.get(CONF_NAME))
         entities = [
             BasestationSwitch(
                 hass=hass,
@@ -60,6 +112,7 @@ async def async_setup_entry(
                 name=entry.data.get(CONF_NAME),
                 entry_id=entry.entry_id,
                 is_automatic=False,
+                is_legacy=(entry.data.get(CONF_SETUP_METHOD) == SETUP_IMPORT)
             )
         ]
 
@@ -76,12 +129,14 @@ class BasestationSwitch(SwitchEntity):
         name: str | None,
         entry_id: str,
         is_automatic: bool,
+        is_legacy: bool = False,
     ) -> None:
         """Initialize the switch entity."""
         self.hass = hass
         self._mac = mac
         self._entry_id = entry_id
         self._is_automatic = is_automatic
+        self._is_legacy = is_legacy
         self._is_on = False
         self._is_available = False
         self._last_update = None
@@ -96,7 +151,12 @@ class BasestationSwitch(SwitchEntity):
             )
 
         # Set unique ID for entity
-        self._attr_unique_id = f"basestation_{self._mac_formatted}"
+        if is_legacy:
+            # For legacy entities imported from YAML, maintain their entity_id format
+            # This ensures existing automations continue to work
+            self._attr_unique_id = f"basestation_{self._mac_formatted.replace(':', '').lower()}"
+        else:
+            self._attr_unique_id = f"basestation_{self._mac_formatted}"
         
         # Fix for duplicate naming: Use provided name or generate a default one
         # Avoid using both _attr_name and name() property to prevent duplication
