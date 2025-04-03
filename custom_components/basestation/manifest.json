@@ -3,6 +3,7 @@
   "name": "Valve Index Basestation",
   "config_flow": true,
   "documentation": "https://github.com/minetech13/homeassistant-basestation",
+  "issue_tracker": "https://github.com/minetech13/homeassistant-basestation/issues",
   "requirements": ["bleak>=0.19.0"],
   "dependencies": ["bluetooth"],
   "codeowners": ["@jariz", "@TCL987", "@MineTech13"],
