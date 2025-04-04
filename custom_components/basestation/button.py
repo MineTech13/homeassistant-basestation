@@ -49,7 +49,7 @@ async def async_setup_entry(
                 entities.append(BasestationIdentifyButton(device))
         
         if entities:
-            async_add_entities(entities)
+            async_add_entities(entities, update_before_add=True)
     else:
         # For manual or selection setup, create entity for the single device
         mac = entry.data[CONF_MAC]
@@ -66,7 +66,7 @@ async def async_setup_entry(
         device = get_basestation_device(hass, mac, device_info)
         # Only add the identify button for Valve basestations
         if isinstance(device, ValveBasestationDevice):
-            async_add_entities([BasestationIdentifyButton(device)])
+            async_add_entities([BasestationIdentifyButton(device)], update_before_add=True)
 
 
 class BasestationIdentifyButton(ButtonEntity):
@@ -78,6 +78,7 @@ class BasestationIdentifyButton(ButtonEntity):
         self._attr_unique_id = f"basestation_{device.mac}_identify"
         self._attr_name = f"{device.device_name} Identify"
         self._attr_icon = "mdi:lightbulb-flash"
+        self._pressed = False
         
         # Share device info with main switch
         self._attr_device_info = DeviceInfo(
@@ -92,4 +93,12 @@ class BasestationIdentifyButton(ButtonEntity):
     async def async_press(self) -> None:
         """Handle the button press."""
         if isinstance(self._device, ValveBasestationDevice):
+            _LOGGER.info("Identify button pressed for %s", self._device.mac)
+            self._pressed = True
             await self._device.identify()
+            self._pressed = False
+    
+    async def async_update(self) -> None:
+        """Update the button state including availability."""
+        # This method ensures the button state is updated when Home Assistant polls entities
+        await self._device.update()

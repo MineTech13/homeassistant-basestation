@@ -2,10 +2,11 @@
 import logging
 import asyncio
 import struct
+import time
 from abc import ABC, abstractmethod
 from typing import Optional, Dict, Any
 
-from bleak import BleakClient, BleakError
+from bleak import BleakClient, BleakError, BleakGATTCharacteristic
 from homeassistant.components import bluetooth
 from homeassistant.core import HomeAssistant
 
@@ -45,6 +46,8 @@ class BasestationDevice(ABC):
         self._available = False
         self._info = {}
         self._retry_count = 0
+        self._last_power_state = None
+        self._last_device_info_read = 0  # Timestamp of last device info read
 
     @property
     def device_name(self) -> str:
@@ -79,7 +82,8 @@ class BasestationDevice(ABC):
         return bluetooth.async_ble_device_from_address(self.hass, self.mac)
 
     async def async_ble_operation(self, operation_type: str, characteristic_uuid: str, 
-                                 retry: bool = True, value: bytes = None):
+                                 retry: bool = True, value: bytes = None, 
+                                 without_response: bool = False):
         """Execute a BLE operation with proper connection management."""
         result = None
         
@@ -90,7 +94,7 @@ class BasestationDevice(ABC):
                     if attempt > 0:
                         await asyncio.sleep(CONNECTION_DELAY * (2 ** attempt))
                     else:
-                        await asyncio.sleep(CONNECTION_DELAY)
+                        await asyncio.sleep(CONNECTION_DELAY * 0.5)  # Faster initial attempt
                     
                     # Get BLE device from registry
                     device = self.get_ble_device()
@@ -101,7 +105,11 @@ class BasestationDevice(ABC):
                     # Connect to device and execute operation
                     async with BleakClient(device, timeout=CONNECTION_TIMEOUT) as client:
                         if operation_type == "write":
-                            await client.write_gatt_char(characteristic_uuid, value)
+                            await client.write_gatt_char(
+                                characteristic_uuid, 
+                                value, 
+                                response=not without_response
+                            )
                             result = True
                         elif operation_type == "read":
                             result = await client.read_gatt_char(characteristic_uuid)
@@ -135,8 +143,17 @@ class BasestationDevice(ABC):
         self._available = False
         return False
 
-    async def read_device_info(self) -> Dict[str, Any]:
-        """Read device information characteristics."""
+    async def read_device_info(self, force=False) -> Dict[str, Any]:
+        """Read device information characteristics.
+        
+        Args:
+            force: If True, forces a read even if the cache time hasn't expired.
+        """
+        # Only read device info at most once every 30 minutes unless forced
+        current_time = time.time()
+        if not force and self._info and (current_time - self._last_device_info_read < 1800):
+            return self._info
+            
         info = {}
         try:
             device = self.get_ble_device()
@@ -149,33 +166,50 @@ class BasestationDevice(ABC):
                 try:
                     firmware = await client.read_gatt_char(FIRMWARE_CHARACTERISTIC)
                     info["firmware"] = firmware.decode('utf-8').strip()
+                    _LOGGER.debug("Read firmware: %s", info["firmware"])
                 except Exception as e:
                     _LOGGER.debug("Failed to read firmware: %s", e)
 
                 try:
                     model = await client.read_gatt_char(MODEL_CHARACTERISTIC)
                     info["model"] = model.decode('utf-8').strip()
+                    _LOGGER.debug("Read model: %s", info["model"])
                 except Exception as e:
                     _LOGGER.debug("Failed to read model: %s", e)
 
                 try:
                     hardware = await client.read_gatt_char(HARDWARE_CHARACTERISTIC)
                     info["hardware"] = hardware.decode('utf-8').strip()
+                    _LOGGER.debug("Read hardware: %s", info["hardware"])
                 except Exception as e:
                     _LOGGER.debug("Failed to read hardware: %s", e)
 
                 try:
                     manufacturer = await client.read_gatt_char(MANUFACTURER_CHARACTERISTIC)
                     info["manufacturer"] = manufacturer.decode('utf-8').strip()
+                    _LOGGER.debug("Read manufacturer: %s", info["manufacturer"])
                 except Exception as e:
                     _LOGGER.debug("Failed to read manufacturer: %s", e)
                 
                 # Add device-specific info reading
                 await self._read_specific_info(client, info)
+                
+                # Update timestamp of last successful read
+                self._last_device_info_read = current_time
+                
         except Exception as e:
             _LOGGER.debug("Failed to read device info: %s", e)
         
-        self._info = info
+        # Only update our stored info if we received something
+        if info:
+            # Preserve existing info if new read doesn't provide it
+            for key, value in self._info.items():
+                if key not in info:
+                    info[key] = value
+                    
+            self._info = info
+            self._available = True
+        
         return info
 
     @abstractmethod
@@ -197,34 +231,102 @@ class ValveBasestationDevice(BasestationDevice):
         result = await self.async_ble_operation("write", V2_PWR_CHARACTERISTIC, value=V2_PWR_ON)
         if result:
             self._is_on = True
+            self._last_power_state = 0x0b  # Set to "on" state
 
     async def turn_off(self) -> None:
         """Turn off the device."""
         result = await self.async_ble_operation("write", V2_PWR_CHARACTERISTIC, value=V2_PWR_SLEEP)
         if result:
             self._is_on = False
+            self._last_power_state = 0x00  # Set to "sleep" state
 
     async def update(self) -> None:
         """Update the device state."""
         value = await self.async_ble_operation("read", V2_PWR_CHARACTERISTIC)
-        if value is not False:  # Check if operation was successful
-            self._is_on = value != V2_PWR_SLEEP
+        if value is not False and len(value) > 0:  # Check if operation was successful
+            self._last_power_state = value[0]
+            self._is_on = value[0] not in (0x00, 0x02)  # On if not sleep or standby
+
+    async def get_raw_power_state(self) -> Optional[int]:
+        """Get the raw power state value."""
+        # If we have a cached value, return it
+        if self._last_power_state is not None:
+            return self._last_power_state
+            
+        # Otherwise try to read it
+        value = await self.async_ble_operation("read", V2_PWR_CHARACTERISTIC)
+        if value is not False and len(value) > 0:  # Check if operation was successful
+            self._last_power_state = value[0]
+            return value[0]
+        return None
 
     async def set_standby(self) -> None:
         """Set the device to standby mode."""
         result = await self.async_ble_operation("write", V2_PWR_CHARACTERISTIC, value=V2_PWR_STANDBY)
         if result:
             self._is_on = False
+            self._last_power_state = 0x02  # Set to "standby" state
 
     async def identify(self) -> None:
         """Make the device blink its LED to identify it."""
-        await self.async_ble_operation("write", V2_IDENTIFY_CHARACTERISTIC, value=b"\x00")
+        # Try different approaches to trigger the identify function
+        
+        # Method 1: Direct connection with writeWithoutResponse
+        try:
+            device = self.get_ble_device()
+            if not device:
+                _LOGGER.warning("Device %s not found in Bluetooth registry", self.mac)
+                return
+
+            _LOGGER.debug("Sending identify command to %s using direct method", self.mac)
+            async with BleakClient(device, timeout=CONNECTION_TIMEOUT) as client:
+                # Always use writeWithoutResponse for identify characteristic
+                await client.write_gatt_char(
+                    V2_IDENTIFY_CHARACTERISTIC, 
+                    b"\x00", 
+                    response=False  # writeWithoutResponse
+                )
+                _LOGGER.info("Identify command sent to %s", self.mac)
+                self._available = True
+                return
+                
+        except Exception as e:
+            _LOGGER.warning("Failed direct identify method: %s", str(e))
+        
+        # Method 2: Use our standard BLE operation with without_response=True
+        try:
+            _LOGGER.debug("Trying identify with standard BLE operation")
+            result = await self.async_ble_operation(
+                "write", 
+                V2_IDENTIFY_CHARACTERISTIC, 
+                value=b"\x00", 
+                without_response=True
+            )
+            if result:
+                _LOGGER.info("Identify command sent successfully with standard method")
+                return
+        except Exception as e:
+            _LOGGER.warning("Failed standard identify method: %s", str(e))
+            
+        # Method 3: Last resort - try both 0x00 and 0x01 values
+        try:
+            _LOGGER.debug("Trying alternate identify value")
+            await self.async_ble_operation(
+                "write", 
+                V2_IDENTIFY_CHARACTERISTIC, 
+                value=b"\x01", 
+                without_response=True
+            )
+            _LOGGER.info("Alternate identify command sent")
+        except Exception as e:
+            _LOGGER.error("All identify methods failed: %s", str(e))
 
     async def _read_specific_info(self, client, info: Dict[str, Any]) -> None:
         """Read V2-specific information."""
         try:
             channel = await client.read_gatt_char(V2_CHANNEL_CHARACTERISTIC)
             info["channel"] = int.from_bytes(channel, byteorder='big')
+            _LOGGER.debug("Read channel: %s", info["channel"])
         except Exception as e:
             _LOGGER.debug("Failed to read channel: %s", e)
 

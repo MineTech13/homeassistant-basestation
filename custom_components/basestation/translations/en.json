@@ -76,6 +76,9 @@
       },
       "pair_id": {
         "name": "Pair ID"
+      },
+      "power_state": {
+        "name": "Power State"
       }
     },
     "switch": {

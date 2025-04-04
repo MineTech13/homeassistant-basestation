@@ -1,5 +1,6 @@
 """The basestation switch component."""
 import logging
+import time
 from datetime import datetime, timedelta
 
 from homeassistant.components.switch import SwitchEntity
@@ -15,6 +16,7 @@ from .const import (
     CONF_PAIR_ID,
     DEVICE_TYPE_V1,
     DEVICE_TYPE_V2,
+    STANDBY_SWITCH_SCAN_INTERVAL,
 )
 from .device import (
     get_basestation_device, 
@@ -92,6 +94,7 @@ class BasestationSwitch(SwitchEntity):
         self._attr_unique_id = f"basestation_{device.mac}"
         self._attr_name = device.device_name
         self._attr_icon = "mdi:virtual-reality"
+        self._last_update = 0
         
         # Create device info for Home Assistant device registry
         self._attr_device_info = DeviceInfo(
@@ -115,11 +118,23 @@ class BasestationSwitch(SwitchEntity):
         """Turn the switch on."""
         await self._device.turn_on()
         self.async_write_ha_state()
+        
+        # Force update of standby switch
+        standby_entity_id = f"switch.{self._device.device_name.lower().replace(' ', '_')}_standby_mode"
+        self.hass.async_create_task(self.hass.services.async_call(
+            "homeassistant", "update_entity", {"entity_id": standby_entity_id}, blocking=False
+        ))
 
     async def async_turn_off(self, **kwargs):
         """Turn the switch off."""
         await self._device.turn_off()
         self.async_write_ha_state()
+        
+        # Force update of standby switch
+        standby_entity_id = f"switch.{self._device.device_name.lower().replace(' ', '_')}_standby_mode"
+        self.hass.async_create_task(self.hass.services.async_call(
+            "homeassistant", "update_entity", {"entity_id": standby_entity_id}, blocking=False
+        ))
 
     async def async_update(self):
         """Fetch new state data for the sensor."""
@@ -137,6 +152,7 @@ class BasestationStandbySwitch(SwitchEntity):
         self._attr_name = f"{device.device_name} Standby Mode"
         self._attr_icon = "mdi:sleep"
         self._is_in_standby = False
+        self._last_update = 0
         
         # Share device info with main switch
         self._attr_device_info = DeviceInfo(
@@ -159,6 +175,12 @@ class BasestationStandbySwitch(SwitchEntity):
             await self._device.set_standby()
             self._is_in_standby = True
             self.async_write_ha_state()
+            
+            # Force refresh of power switch
+            power_entity_id = f"switch.{self._device.device_name.lower().replace(' ', '_')}"
+            self.hass.async_create_task(self.hass.services.async_call(
+                "homeassistant", "update_entity", {"entity_id": power_entity_id}, blocking=False
+            ))
 
     async def async_turn_off(self, **kwargs):
         """Turn off standby mode (device will go to full on mode)."""
@@ -166,9 +188,31 @@ class BasestationStandbySwitch(SwitchEntity):
             await self._device.turn_on()
             self._is_in_standby = False
             self.async_write_ha_state()
+            
+            # Force refresh of power switch
+            power_entity_id = f"switch.{self._device.device_name.lower().replace(' ', '_')}"
+            self.hass.async_create_task(self.hass.services.async_call(
+                "homeassistant", "update_entity", {"entity_id": power_entity_id}, blocking=False
+            ))
 
     async def async_update(self):
         """Update the standby state based on device state."""
-        # We don't have a direct way to determine if in standby mode
-        # This would require an additional read of the characteristic
-        pass
+        current_time = time.time()
+        if current_time - self._last_update < STANDBY_SWITCH_SCAN_INTERVAL:
+            return
+
+        if isinstance(self._device, ValveBasestationDevice):
+            # Get the raw power state value to determine if in standby mode
+            raw_state = await self._device.get_raw_power_state()
+            
+            # Update standby state - 0x02 is the standby state value
+            if raw_state == 0x02:
+                if not self._is_in_standby:
+                    self._is_in_standby = True
+                    _LOGGER.debug("Standby state changed to ON")
+            elif raw_state is not None:  # Only update if we have a valid state
+                if self._is_in_standby:
+                    self._is_in_standby = False
+                    _LOGGER.debug("Standby state changed to OFF")
+                
+            self._last_update = current_time

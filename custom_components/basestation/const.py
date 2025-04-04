@@ -43,3 +43,18 @@ V2_NAME_PREFIX = "LHB-"
 
 # Discovery settings
 DISCOVERY_INTERVAL = 60  # seconds
+
+# Power state descriptions for V2 basestations
+V2_STATE_DESCRIPTIONS = {
+    0x00: "Sleep",
+    0x01: "Starting Up",
+    0x02: "Standby",
+    0x08: "Booting",
+    0x09: "Booting",
+    0x0b: "On"
+}
+
+# Scan intervals (in seconds)
+INFO_SENSOR_SCAN_INTERVAL = 1800  # 30 minutes - for static info sensors
+POWER_STATE_SCAN_INTERVAL = 5     # 5 seconds - for power state sensor
+STANDBY_SWITCH_SCAN_INTERVAL = 5  # 5 seconds - for standby switch
