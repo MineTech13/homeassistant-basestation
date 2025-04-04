@@ -1,9 +1,12 @@
 {
   "domain": "basestation",
-  "name": "Valve Index Basestation",
+  "name": "VR Basestation",
   "bluetooth": [
     {
       "local_name": "LHB-*"
+    },
+    {
+      "local_name": "HTC BS*"
     }
   ],
   "codeowners": ["@jariz", "@TCL987", "@MineTech13"],

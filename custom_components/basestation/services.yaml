@@ -1,0 +1,33 @@
+identify:
+  name: Identify
+  description: Blink the LED of a Valve Basestation to identify it.
+  target:
+    entity:
+      integration: basestation
+      domain: switch
+  fields:
+    entity_id:
+      name: Device
+      description: The basestation device to identify (Valve basestations only).
+      required: true
+      selector:
+        entity:
+          integration: basestation
+          domain: switch
+
+set_standby:
+  name: Set Standby
+  description: Set a Valve Basestation to standby mode.
+  target:
+    entity:
+      integration: basestation
+      domain: switch
+  fields:
+    entity_id:
+      name: Device
+      description: The basestation device to put in standby mode (Valve basestations only).
+      required: true
+      selector:
+        entity:
+          integration: basestation
+          domain: switch

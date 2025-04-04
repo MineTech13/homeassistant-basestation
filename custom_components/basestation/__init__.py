@@ -1,10 +1,8 @@
-"""The Valve Index Basestation integration."""
+"""The VR Basestation integration."""
 from __future__ import annotations
-
-import asyncio
 import logging
+import asyncio
 from datetime import timedelta
-from typing import Any
 
 from bleak import BleakScanner, BleakError
 import voluptuous as vol
@@ -22,17 +20,23 @@ from .const import (
     SETUP_AUTOMATIC,
     CONF_DISCOVERY_PREFIX,
     DISCOVERY_INTERVAL,
+    V1_NAME_PREFIX,
+    V2_NAME_PREFIX,
+    CONF_DEVICE_TYPE,
+    DEVICE_TYPE_V1,
+    DEVICE_TYPE_V2,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
 # Define supported platforms
-PLATFORMS: list[Platform] = [Platform.SWITCH]
+PLATFORMS = [Platform.SWITCH, Platform.BUTTON, Platform.SENSOR]
 
 # Define validation for a single basestation entry
 BASESTATION_SCHEMA = vol.Schema({
     vol.Required(CONF_MAC): cv.string,
     vol.Optional(CONF_NAME): cv.string,
+    vol.Optional(CONF_DEVICE_TYPE): cv.string,
 })
 
 # Define a schema that allows for both config entries and legacy config
@@ -45,7 +49,7 @@ CONFIG_SCHEMA = vol.Schema(
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
-    """Set up the Valve Index Basestation component."""
+    """Set up the VR Basestation component."""
     hass.data.setdefault(DOMAIN, {})
     
     # Check for legacy configuration (YAML) and set up migration
@@ -60,7 +64,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up Valve Index Basestation from a config entry."""
+    """Set up VR Basestation from a config entry."""
     hass.data.setdefault(DOMAIN, {})
     
     # Initialize automatic discovery if configured
@@ -73,6 +77,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Set up entities for this entry
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    
+    # Set up services
+    from .services import async_setup_services
+    await async_setup_services(hass)
+    
     return True
 
 
@@ -101,7 +110,7 @@ class BasestationDiscovery:
             device[CONF_MAC]
             for device in entry.data.get("devices", [])
         }
-        self._prefix = entry.data[CONF_DISCOVERY_PREFIX]
+        self._prefix = entry.data.get(CONF_DISCOVERY_PREFIX, "")
         self._remove_interval = None
         self._scanning = False
 
@@ -144,13 +153,15 @@ class BasestationDiscovery:
             devices = await BleakScanner.discover()
             
             # Filter for new basestation devices
-            new_devices = [
-                device for device in devices
-                if device.address 
-                and device.name 
-                and device.name.startswith(self._prefix)
-                and device.address not in self._known_devices
-            ]
+            new_devices = []
+            for device in devices:
+                if (not device.address or not device.name or 
+                    device.address in self._known_devices):
+                    continue
+                
+                # Check if device name matches any of our prefixes
+                if self._is_valid_device(device.name):
+                    new_devices.append(device)
 
             if new_devices:
                 _LOGGER.info(
@@ -167,6 +178,7 @@ class BasestationDiscovery:
                         *[{
                             CONF_MAC: device.address,
                             CONF_NAME: device.name,
+                            CONF_DEVICE_TYPE: self._determine_device_type(device.name),
                         } for device in new_devices]
                     ]
                 }
@@ -190,3 +202,22 @@ class BasestationDiscovery:
             _LOGGER.error("Error scanning for devices: %s", ex)
         finally:
             self._scanning = False
+    
+    def _is_valid_device(self, name: str) -> bool:
+        """Check if device name is valid based on prefix."""
+        if self._prefix and name.startswith(self._prefix):
+            return True
+        
+        # If no specific prefix, check for any known basestation prefix
+        if not self._prefix:
+            return name.startswith(V1_NAME_PREFIX) or name.startswith(V2_NAME_PREFIX)
+        
+        return False
+    
+    def _determine_device_type(self, name: str) -> str:
+        """Determine device type based on name."""
+        if name.startswith(V1_NAME_PREFIX):
+            return DEVICE_TYPE_V1
+        if name.startswith(V2_NAME_PREFIX):
+            return DEVICE_TYPE_V2
+        return DEVICE_TYPE_V2  # Default to V2 if we can't determine
