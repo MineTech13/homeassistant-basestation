@@ -245,7 +245,9 @@ class ValveBasestationDevice(BasestationDevice):
         value = await self.async_ble_operation("read", V2_PWR_CHARACTERISTIC)
         if value is not False and len(value) > 0:  # Check if operation was successful
             self._last_power_state = value[0]
-            self._is_on = value[0] not in (0x00, 0x02)  # On if not sleep or standby
+            # Changed to consider the device "on" if not in sleep mode (0x00)
+            # This means both normal operation (0x0b) and standby (0x02) will show as "on"
+            self._is_on = value[0] != 0x00
 
     async def get_raw_power_state(self) -> Optional[int]:
         """Get the raw power state value."""
@@ -264,7 +266,8 @@ class ValveBasestationDevice(BasestationDevice):
         """Set the device to standby mode."""
         result = await self.async_ble_operation("write", V2_PWR_CHARACTERISTIC, value=V2_PWR_STANDBY)
         if result:
-            self._is_on = False
+            # Changed from False to True - standby mode should show the main switch as "on"
+            self._is_on = True
             self._last_power_state = 0x02  # Set to "standby" state
 
     async def identify(self) -> None:
