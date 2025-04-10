@@ -58,3 +58,7 @@ V2_STATE_DESCRIPTIONS = {
 INFO_SENSOR_SCAN_INTERVAL = 1800  # 30 minutes - for static info sensors
 POWER_STATE_SCAN_INTERVAL = 5     # 5 seconds - for power state sensor
 STANDBY_SWITCH_SCAN_INTERVAL = 5  # 5 seconds - for standby switch
+
+# Initial device info setup retries
+INITIAL_RETRY_DELAY = 2           # seconds
+MAX_INITIAL_RETRIES = 3           # number of retries

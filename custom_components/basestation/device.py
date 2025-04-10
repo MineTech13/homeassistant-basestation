@@ -33,6 +33,7 @@ CONNECTION_SEMAPHORE = asyncio.Semaphore(2)
 CONNECTION_DELAY = 0.5  # Delay between connections in seconds
 CONNECTION_TIMEOUT = 10  # Connection timeout in seconds
 MAX_RETRIES = 2  # Maximum connection retry attempts
+INFO_READ_RETRIES = 3  # Retries for device info reading
 
 class BasestationDevice(ABC):
     """Base class for basestation devices."""
@@ -48,6 +49,7 @@ class BasestationDevice(ABC):
         self._retry_count = 0
         self._last_power_state = None
         self._last_device_info_read = 0  # Timestamp of last device info read
+        self._device_info_read_success = False  # Flag to track if we've ever successfully read device info
 
     @property
     def device_name(self) -> str:
@@ -148,73 +150,113 @@ class BasestationDevice(ABC):
         
         Args:
             force: If True, forces a read even if the cache time hasn't expired.
+            
+        Returns:
+            Dictionary with device information.
         """
         # Only read device info at most once every 30 minutes unless forced
         current_time = time.time()
-        if not force and self._info and (current_time - self._last_device_info_read < 1800):
+        if not force and self._device_info_read_success and (current_time - self._last_device_info_read < 1800):
+            _LOGGER.debug("Using cached device info for %s", self.mac)
             return self._info
             
-        info = {}
-        try:
-            device = self.get_ble_device()
-            if not device:
-                _LOGGER.debug("Device %s not found in Bluetooth registry", self.mac)
-                return info
+        # Try to read with multiple retries for reliability
+        for attempt in range(INFO_READ_RETRIES):
+            if attempt > 0:
+                _LOGGER.debug("Retrying device info read (attempt %d/%d) for %s", 
+                           attempt + 1, INFO_READ_RETRIES, self.mac)
+                await asyncio.sleep(CONNECTION_DELAY * (2 ** attempt))
                 
-            async with BleakClient(device, timeout=CONNECTION_TIMEOUT) as client:
-                # Try to read each characteristic, ignoring errors
-                try:
-                    firmware = await client.read_gatt_char(FIRMWARE_CHARACTERISTIC)
-                    info["firmware"] = firmware.decode('utf-8').strip()
-                    _LOGGER.debug("Read firmware: %s", info["firmware"])
-                except Exception as e:
-                    _LOGGER.debug("Failed to read firmware: %s", e)
-
-                try:
-                    model = await client.read_gatt_char(MODEL_CHARACTERISTIC)
-                    info["model"] = model.decode('utf-8').strip()
-                    _LOGGER.debug("Read model: %s", info["model"])
-                except Exception as e:
-                    _LOGGER.debug("Failed to read model: %s", e)
-
-                try:
-                    hardware = await client.read_gatt_char(HARDWARE_CHARACTERISTIC)
-                    info["hardware"] = hardware.decode('utf-8').strip()
-                    _LOGGER.debug("Read hardware: %s", info["hardware"])
-                except Exception as e:
-                    _LOGGER.debug("Failed to read hardware: %s", e)
-
-                try:
-                    manufacturer = await client.read_gatt_char(MANUFACTURER_CHARACTERISTIC)
-                    info["manufacturer"] = manufacturer.decode('utf-8').strip()
-                    _LOGGER.debug("Read manufacturer: %s", info["manufacturer"])
-                except Exception as e:
-                    _LOGGER.debug("Failed to read manufacturer: %s", e)
-                
-                # Add device-specific info reading
-                await self._read_specific_info(client, info)
-                
-                # Update timestamp of last successful read
-                self._last_device_info_read = current_time
-                
-        except Exception as e:
-            _LOGGER.debug("Failed to read device info: %s", e)
-        
-        # Only update our stored info if we received something
-        if info:
-            # Preserve existing info if new read doesn't provide it
-            for key, value in self._info.items():
-                if key not in info:
-                    info[key] = value
+            info = {}
+            read_success = False
+            
+            try:
+                device = self.get_ble_device()
+                if not device:
+                    _LOGGER.debug("Device %s not found in Bluetooth registry for info read", self.mac)
+                    continue
                     
-            self._info = info
-            self._available = True
+                async with BleakClient(device, timeout=CONNECTION_TIMEOUT) as client:
+                    # Try to read each characteristic, logging detailed errors
+                    # Flag to track if we successfully read any info
+                    any_read_successful = False
+                    
+                    try:
+                        firmware = await client.read_gatt_char(FIRMWARE_CHARACTERISTIC)
+                        if firmware:
+                            info["firmware"] = firmware.decode('utf-8').strip()
+                            _LOGGER.debug("Read firmware for %s: %s", self.mac, info["firmware"])
+                            any_read_successful = True
+                    except Exception as e:
+                        _LOGGER.debug("Failed to read firmware for %s: %s", self.mac, e)
+
+                    try:
+                        model = await client.read_gatt_char(MODEL_CHARACTERISTIC)
+                        if model:
+                            info["model"] = model.decode('utf-8').strip()
+                            _LOGGER.debug("Read model for %s: %s", self.mac, info["model"])
+                            any_read_successful = True
+                    except Exception as e:
+                        _LOGGER.debug("Failed to read model for %s: %s", self.mac, e)
+
+                    try:
+                        hardware = await client.read_gatt_char(HARDWARE_CHARACTERISTIC)
+                        if hardware:
+                            info["hardware"] = hardware.decode('utf-8').strip()
+                            _LOGGER.debug("Read hardware for %s: %s", self.mac, info["hardware"])
+                            any_read_successful = True
+                    except Exception as e:
+                        _LOGGER.debug("Failed to read hardware for %s: %s", self.mac, e)
+
+                    try:
+                        manufacturer = await client.read_gatt_char(MANUFACTURER_CHARACTERISTIC)
+                        if manufacturer:
+                            info["manufacturer"] = manufacturer.decode('utf-8').strip()
+                            _LOGGER.debug("Read manufacturer for %s: %s", self.mac, info["manufacturer"])
+                            any_read_successful = True
+                    except Exception as e:
+                        _LOGGER.debug("Failed to read manufacturer for %s: %s", self.mac, e)
+                    
+                    # Add device-specific info reading
+                    specific_info_success = await self._read_specific_info(client, info)
+                    
+                    # Set read_success flag if we read any info
+                    read_success = any_read_successful or specific_info_success
+                    
+            except Exception as e:
+                _LOGGER.debug("Failed to connect for device info read for %s: %s", self.mac, e)
+            
+            # Only update stored info and timestamp if we had a successful read
+            if read_success:
+                # Preserve existing info if new read doesn't provide it
+                for key, value in self._info.items():
+                    if key not in info:
+                        info[key] = value
+                        
+                self._info = info
+                self._available = True
+                self._last_device_info_read = current_time
+                self._device_info_read_success = True
+                
+                _LOGGER.info("Successfully read device info for %s, fields: %s", 
+                          self.mac, ", ".join(info.keys()))
+                
+                return info
         
-        return info
+        # If all attempts failed, log a warning
+        if not self._device_info_read_success:
+            _LOGGER.warning("Failed to read any device info for %s after %d attempts", 
+                         self.mac, INFO_READ_RETRIES)
+        
+        return self._info
 
     @abstractmethod
-    async def _read_specific_info(self, client, info: Dict[str, Any]) -> None:
-        """Read device-specific information."""
+    async def _read_specific_info(self, client, info: Dict[str, Any]) -> bool:
+        """Read device-specific information.
+        
+        Returns:
+            True if any information was successfully read, False otherwise.
+        """
         pass
 
 
@@ -324,14 +366,18 @@ class ValveBasestationDevice(BasestationDevice):
         except Exception as e:
             _LOGGER.error("All identify methods failed: %s", str(e))
 
-    async def _read_specific_info(self, client, info: Dict[str, Any]) -> None:
+    async def _read_specific_info(self, client, info: Dict[str, Any]) -> bool:
         """Read V2-specific information."""
         try:
             channel = await client.read_gatt_char(V2_CHANNEL_CHARACTERISTIC)
-            info["channel"] = int.from_bytes(channel, byteorder='big')
-            _LOGGER.debug("Read channel: %s", info["channel"])
+            if channel:
+                info["channel"] = int.from_bytes(channel, byteorder='big')
+                _LOGGER.debug("Read channel: %s", info["channel"])
+                return True
         except Exception as e:
             _LOGGER.debug("Failed to read channel: %s", e)
+        
+        return False
 
 
 class ViveBasestationDevice(BasestationDevice):
@@ -341,6 +387,9 @@ class ViveBasestationDevice(BasestationDevice):
         """Initialize the device."""
         super().__init__(hass, mac, name)
         self.pair_id = pair_id
+        # Store pair_id in the info dictionary
+        if pair_id is not None:
+            self._info["pair_id"] = f"0x{pair_id:08X}"
 
     @property
     def default_name(self) -> str:
@@ -408,11 +457,13 @@ class ViveBasestationDevice(BasestationDevice):
         except Exception:
             self._available = False
 
-    async def _read_specific_info(self, client, info: Dict[str, Any]) -> None:
+    async def _read_specific_info(self, client, info: Dict[str, Any]) -> bool:
         """Read V1-specific information."""
-        # Add pair ID to info
+        # Add pair ID to info if available
         if self.pair_id:
             info["pair_id"] = f"0x{self.pair_id:08X}"
+            return True
+        return False
 
 
 def get_basestation_device(hass, mac, device_info) -> Optional[BasestationDevice]:
