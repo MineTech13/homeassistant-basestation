@@ -1,0 +1,63 @@
+{
+  "name": "MineTech13/homeassistant-basestation",
+  "image": "mcr.microsoft.com/devcontainers/python:3.13",
+  "postCreateCommand": "scripts/setup",
+  "containerEnv": {
+    // skip writing .pyc files
+    "PYTHONDONTWRITEBYTECODE": "1"
+  },
+  "forwardPorts": [
+    8123
+  ],
+  "portsAttributes": {
+    "8123": {
+      "label": "Home Assistant",
+      "onAutoForward": "notify"
+    }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "charliermarsh.ruff",
+        "github.vscode-pull-request-github",
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "tamasfe.even-better-toml"
+      ],
+      "settings": {
+        "editor.formatOnPaste": true,
+        "editor.formatOnSave": true,
+        "editor.formatOnType": false,
+        "editor.tabSize": 4,
+        "files.eol": "\n",
+        "files.trimTrailingWhitespace": true,
+        "python.analysis.typeCheckingMode": "basic",
+        "python.analysis.autoImportCompletions": true,
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "ruff.format.preview": true,
+        "ruff.lineLength": 120,
+        "ruff.lint.preview": true,
+        "ruff.nativeServer": "on",
+        "ruff.interpreter": [
+          "/usr/local/bin/python"
+        ],
+        "ruff.path": [
+          "/home/vscode/.local/bin/ruff"
+        ],
+        "[json]": {
+          "editor.tabSize": 2
+        },
+        "[jsonc]": {
+          "editor.tabSize": 2
+        },
+        "[python]": {
+          "editor.codeActionsOnSave": {
+            "source.organizeImports.ruff": "explicit"
+          },
+          "editor.defaultFormatter": "charliermarsh.ruff"
+        }
+      }
+    }
+  },
+  "remoteUser": "vscode"
+}

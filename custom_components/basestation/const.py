@@ -51,14 +51,17 @@ V2_STATE_DESCRIPTIONS = {
     0x02: "Standby",
     0x08: "Booting",
     0x09: "Booting",
-    0x0b: "On"
+    0x0B: "On",
 }
 
 # Scan intervals (in seconds)
 INFO_SENSOR_SCAN_INTERVAL = 1800  # 30 minutes - for static info sensors
-POWER_STATE_SCAN_INTERVAL = 5     # 5 seconds - for power state sensor
+POWER_STATE_SCAN_INTERVAL = 5  # 5 seconds - for power state sensor
 STANDBY_SWITCH_SCAN_INTERVAL = 5  # 5 seconds - for standby switch
 
 # Initial device info setup retries
-INITIAL_RETRY_DELAY = 2           # seconds
-MAX_INITIAL_RETRIES = 3           # number of retries
+INITIAL_RETRY_DELAY = 2  # seconds
+MAX_INITIAL_RETRIES = 3  # number of retries
+
+# Number of failures allowed before operation is considered unsuccessful
+MAX_CONSECUTIVE_FAILURES = 3

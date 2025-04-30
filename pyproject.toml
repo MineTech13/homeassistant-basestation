@@ -1,0 +1,37 @@
+[project]
+name = "basestation"
+version = "2.0.0"
+dependencies = [
+    "bleak>=0.19.0",
+    "debugpy",
+    "homeassistant==2025.2.4",
+    "mypy~=1.15.0",
+    "ruff~=0.11.7",
+]
+requires-python = "~=3.13"
+
+[tool.ruff]
+fix = true
+target-version = "py313"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "ANN401", # any-type
+    "BLE001", # blind-except
+    "COM812", # missing-trailing-comma, handled via formatter
+    "CPY001", # missing-copyright-notice
+    "D203",   # no-blank-line-before-class (incompatible with formatter)
+    "D212",   # multi-line-summary-first-line (incompatible with formatter)
+    "D400",   # missing-trailing-period
+    "D415",   # missing-terminal-punctuation
+    "DOC201", # docstyle-missing-returns
+]
+
+[tool.ruff.lint.flake8-import-conventions]
+banned-from = ["datetime"]
+
+[tool.setuptools]
+packages = ["basestation"]
+package-dir = { "" = "custom_components" }
