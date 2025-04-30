@@ -34,9 +34,7 @@
         "python.analysis.typeCheckingMode": "basic",
         "python.analysis.autoImportCompletions": true,
         "python.defaultInterpreterPath": "/usr/local/bin/python",
-        "ruff.format.preview": true,
         "ruff.lineLength": 120,
-        "ruff.lint.preview": true,
         "ruff.nativeServer": "on",
         "ruff.interpreter": [
           "/usr/local/bin/python"
