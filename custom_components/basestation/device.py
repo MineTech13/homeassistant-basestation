@@ -5,12 +5,11 @@ import logging
 import struct
 import time
 from abc import ABC, abstractmethod
-from typing import Any, Literal, cast, overload
+from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
 from attr import dataclass
 from bleak import BleakClient
 from bleak.exc import BleakError
-from git import TYPE_CHECKING
 from homeassistant.components import bluetooth
 from homeassistant.core import HomeAssistant
 

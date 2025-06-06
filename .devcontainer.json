@@ -6,9 +6,7 @@
     // skip writing .pyc files
     "PYTHONDONTWRITEBYTECODE": "1"
   },
-  "forwardPorts": [
-    8123
-  ],
+  "forwardPorts": [8123],
   "portsAttributes": {
     "8123": {
       "label": "Home Assistant",
@@ -36,12 +34,8 @@
         "python.defaultInterpreterPath": "/usr/local/bin/python",
         "ruff.lineLength": 120,
         "ruff.nativeServer": "on",
-        "ruff.interpreter": [
-          "/usr/local/bin/python"
-        ],
-        "ruff.path": [
-          "/home/vscode/.local/bin/ruff"
-        ],
+        "ruff.interpreter": ["/usr/local/bin/python"],
+        "ruff.path": ["/home/vscode/.local/bin/ruff"],
         "[json]": {
           "editor.tabSize": 2
         },
