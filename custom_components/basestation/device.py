@@ -14,6 +14,7 @@ from homeassistant.components import bluetooth
 from homeassistant.core import HomeAssistant
 
 from .const import (
+    DEFAULT_CONNECTION_TIMEOUT,
     DEVICE_TYPE_V1,
     DEVICE_TYPE_V2,
     FIRMWARE_CHARACTERISTIC,
@@ -42,7 +43,6 @@ _LOGGER = logging.getLogger(__name__)
 # Limit concurrent connections
 CONNECTION_SEMAPHORE = asyncio.Semaphore(2)
 CONNECTION_DELAY = 0.5  # Delay between connections in seconds
-CONNECTION_TIMEOUT = 10  # Connection timeout in seconds
 MAX_RETRIES = 2  # Maximum connection retry attempts
 INFO_READ_RETRIES = 3  # Retries for device info reading
 
@@ -71,11 +71,18 @@ class BLEOperationWrite:
 class BasestationDevice(ABC):
     """Base class for basestation devices."""
 
-    def __init__(self, hass: HomeAssistant, mac: str, name: str | None = None) -> None:
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        mac: str,
+        name: str | None = None,
+        connection_timeout: int = DEFAULT_CONNECTION_TIMEOUT,
+    ) -> None:
         """Initialize the device."""
         self.hass = hass
         self.mac = mac
         self.custom_name = name
+        self.connection_timeout = connection_timeout  # User-configurable timeout
         self._is_on = False
         self._available = False
         self._info: dict[BaseStationDeviceInfoKey, str] = {}
@@ -147,8 +154,8 @@ class BasestationDevice(ABC):
                         _LOGGER.debug("Device %s not found in Bluetooth registry", self.mac)
                         continue
 
-                    # Connect to device and execute operation
-                    async with BleakClient(device, timeout=CONNECTION_TIMEOUT) as client:
+                    # Connect to device and execute operation using user-configured timeout
+                    async with BleakClient(device, timeout=self.connection_timeout) as client:
                         if isinstance(op, BLEOperationRead):
                             result = await client.read_gatt_char(op.characteristic_uuid)
                         else:
@@ -230,7 +237,8 @@ class BasestationDevice(ABC):
                     continue
 
                 info: dict[BaseStationDeviceInfoKey, str] = {}
-                async with BleakClient(device, timeout=CONNECTION_TIMEOUT) as client:
+                # Use user-configured timeout for device info reading
+                async with BleakClient(device, timeout=self.connection_timeout) as client:
                     # Try to read each characteristic, logging detailed errors
                     # Flag to track if we successfully read any info
                     any_read_successful: bool = False
@@ -298,6 +306,16 @@ class BasestationDevice(ABC):
 class ValveBasestationDevice(BasestationDevice):
     """Valve Index Basestation (V2) device."""
 
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        mac: str,
+        name: str | None = None,
+        connection_timeout: int = DEFAULT_CONNECTION_TIMEOUT,
+    ) -> None:
+        """Initialize the Valve basestation device."""
+        super().__init__(hass, mac, name, connection_timeout)
+
     @property
     def default_name(self) -> str:
         """Return the default name."""
@@ -359,7 +377,7 @@ class ValveBasestationDevice(BasestationDevice):
                 return
 
             _LOGGER.debug("Sending identify command to %s using direct method", self.mac)
-            async with BleakClient(device, timeout=CONNECTION_TIMEOUT) as client:
+            async with BleakClient(device, timeout=self.connection_timeout) as client:
                 # Always use writeWithoutResponse for identify characteristic
                 await client.write_gatt_char(
                     V2_IDENTIFY_CHARACTERISTIC,
@@ -418,9 +436,10 @@ class ViveBasestationDevice(BasestationDevice):
         mac: str,
         name: str | None = None,
         pair_id: int | None = None,
+        connection_timeout: int = DEFAULT_CONNECTION_TIMEOUT,
     ) -> None:
-        """Initialize the device."""
-        super().__init__(hass, mac, name)
+        """Initialize the Vive basestation device."""
+        super().__init__(hass, mac, name, connection_timeout)
         self.pair_id = pair_id
         # Store pair_id in the info dictionary
         if pair_id is not None:
@@ -511,17 +530,18 @@ def get_basestation_device(
     name: str | None,
     device_type: Literal["valve", "vive"] | None,
     pair_id: int | None,
+    connection_timeout: int = DEFAULT_CONNECTION_TIMEOUT,
 ) -> BasestationDevice:
     """Create the appropriate device based on the device info."""
     if device_type == DEVICE_TYPE_V2 or (name and name.startswith(V2_NAME_PREFIX)):
-        return ValveBasestationDevice(hass, mac, name)
+        return ValveBasestationDevice(hass, mac, name, connection_timeout=connection_timeout)
     if device_type == DEVICE_TYPE_V1 or (name and name.startswith(V1_NAME_PREFIX)):
         # For V1 devices, we need the pair ID
-        return ViveBasestationDevice(hass, mac, name, pair_id)
+        return ViveBasestationDevice(hass, mac, name, pair_id, connection_timeout=connection_timeout)
 
     # If we can't determine the type, default to Valve basestation
     _LOGGER.warning("Could not determine device type for %s, defaulting to Valve basestation", mac)
-    return ValveBasestationDevice(hass, mac, name)
+    return ValveBasestationDevice(hass, mac, name, connection_timeout=connection_timeout)
 
 
 async def connect_delay(attempt: int) -> None:

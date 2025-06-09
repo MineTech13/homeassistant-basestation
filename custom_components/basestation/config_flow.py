@@ -10,11 +10,22 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.components.bluetooth import BluetoothServiceInfoBleak
 from homeassistant.const import CONF_MAC, CONF_NAME
+from homeassistant.core import callback
 
 from .const import (
+    CONF_CONNECTION_TIMEOUT,
     CONF_DEVICE_TYPE,
+    CONF_ENABLE_INFO_SENSORS,
+    CONF_ENABLE_POWER_STATE_SENSOR,
+    CONF_INFO_SCAN_INTERVAL,
     CONF_PAIR_ID,
+    CONF_POWER_STATE_SCAN_INTERVAL,
     CONF_SETUP_METHOD,
+    CONF_STANDBY_SCAN_INTERVAL,
+    DEFAULT_CONNECTION_TIMEOUT,
+    DEFAULT_INFO_SCAN_INTERVAL,
+    DEFAULT_POWER_STATE_SCAN_INTERVAL,
+    DEFAULT_STANDBY_SCAN_INTERVAL,
     DEVICE_TYPE_V1,
     DEVICE_TYPE_V2,
     DOMAIN,
@@ -25,7 +36,7 @@ from .const import (
 )
 
 if TYPE_CHECKING:
-    from homeassistant.config_entries import ConfigFlowResult
+    from homeassistant.config_entries import ConfigFlowResult, OptionsFlow
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -45,6 +56,12 @@ class BasestationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._selected_device_type: str = ""
         # Store discovery info for bluetooth discovery flows
         self._discovery_info: BluetoothServiceInfoBleak | None = None
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> OptionsFlow:
+        """Create the options flow."""
+        return BasestationOptionsFlow(config_entry)
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Handle the initial step - go directly to manual setup."""
@@ -333,6 +350,97 @@ class BasestationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_DEVICE_TYPE: self._selected_device_type,
                 CONF_PAIR_ID: pair_id,
                 CONF_SETUP_METHOD: SETUP_MANUAL,
+            },
+        )
+
+
+class BasestationOptionsFlow(config_entries.OptionsFlow):
+    """Handle Basestation options flow."""
+
+    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+        """Initialize the options flow."""
+        self.config_entry = config_entry
+
+    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Manage the options."""
+        return await self.async_step_device_options()
+
+    async def async_step_device_options(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Handle device-specific options."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            # Validate scan intervals
+            if user_input.get(CONF_INFO_SCAN_INTERVAL, 0) < 300:  # Minimum 5 minutes
+                errors[CONF_INFO_SCAN_INTERVAL] = "scan_interval_too_low"
+
+            if user_input.get(CONF_POWER_STATE_SCAN_INTERVAL, 0) < 1:  # Minimum 1 second
+                errors[CONF_POWER_STATE_SCAN_INTERVAL] = "scan_interval_too_low"
+
+            if user_input.get(CONF_STANDBY_SCAN_INTERVAL, 0) < 1:  # Minimum 1 second
+                errors[CONF_STANDBY_SCAN_INTERVAL] = "scan_interval_too_low"
+
+            if user_input.get(CONF_CONNECTION_TIMEOUT, 0) < 5:  # Minimum 5 seconds
+                errors[CONF_CONNECTION_TIMEOUT] = "timeout_too_low"
+
+            if not errors:
+                # Update the config entry with new options
+                return self.async_create_entry(title="", data=user_input)
+
+        # Get current options or set defaults
+        current_options = self.config_entry.options
+        device_type = self.config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_V2)
+        current_name = current_options.get(CONF_NAME, self.config_entry.data.get(CONF_NAME, ""))
+
+        # Build the schema based on device type
+        schema_dict = {
+            vol.Optional(CONF_NAME, default=current_name, description="Custom device name"): str,
+            vol.Optional(
+                CONF_INFO_SCAN_INTERVAL,
+                default=current_options.get(CONF_INFO_SCAN_INTERVAL, DEFAULT_INFO_SCAN_INTERVAL),
+                description="How often to scan for device info (seconds, minimum 300)",
+            ): vol.All(vol.Coerce(int), vol.Range(min=300, max=86400)),
+            vol.Optional(
+                CONF_CONNECTION_TIMEOUT,
+                default=current_options.get(CONF_CONNECTION_TIMEOUT, DEFAULT_CONNECTION_TIMEOUT),
+                description="BLE connection timeout (seconds, minimum 5)",
+            ): vol.All(vol.Coerce(int), vol.Range(min=5, max=60)),
+            vol.Optional(
+                CONF_ENABLE_INFO_SENSORS,
+                default=current_options.get(CONF_ENABLE_INFO_SENSORS, True),
+                description="Enable device information sensors (firmware, model, etc.)",
+            ): bool,
+        }
+
+        # Add V2-specific options
+        if device_type == DEVICE_TYPE_V2:
+            schema_dict.update(
+                {
+                    vol.Optional(
+                        CONF_POWER_STATE_SCAN_INTERVAL,
+                        default=current_options.get(CONF_POWER_STATE_SCAN_INTERVAL, DEFAULT_POWER_STATE_SCAN_INTERVAL),
+                        description="How often to check power state (seconds, minimum 1)",
+                    ): vol.All(vol.Coerce(int), vol.Range(min=1, max=300)),
+                    vol.Optional(
+                        CONF_STANDBY_SCAN_INTERVAL,
+                        default=current_options.get(CONF_STANDBY_SCAN_INTERVAL, DEFAULT_STANDBY_SCAN_INTERVAL),
+                        description="How often to check standby state (seconds, minimum 1)",
+                    ): vol.All(vol.Coerce(int), vol.Range(min=1, max=300)),
+                    vol.Optional(
+                        CONF_ENABLE_POWER_STATE_SENSOR,
+                        default=current_options.get(CONF_ENABLE_POWER_STATE_SENSOR, True),
+                        description="Enable power state sensor",
+                    ): bool,
+                }
+            )
+
+        return self.async_show_form(
+            step_id="device_options",
+            data_schema=vol.Schema(schema_dict),
+            errors=errors,
+            description_placeholders={
+                "device_name": self.config_entry.title,
+                "device_type": "Valve Basestation (V2)" if device_type == DEVICE_TYPE_V2 else "Vive Basestation (V1)",
             },
         )
 

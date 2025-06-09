@@ -30,6 +30,14 @@ CONF_DEVICE_TYPE = "device_type"
 CONF_PAIR_ID = "pair_id"  # For V1 basestations
 CONF_SETUP_METHOD = "setup_method"
 
+# Options flow configuration keys
+CONF_INFO_SCAN_INTERVAL = "info_scan_interval"
+CONF_POWER_STATE_SCAN_INTERVAL = "power_state_scan_interval"
+CONF_STANDBY_SCAN_INTERVAL = "standby_scan_interval"
+CONF_CONNECTION_TIMEOUT = "connection_timeout"
+CONF_ENABLE_INFO_SENSORS = "enable_info_sensors"
+CONF_ENABLE_POWER_STATE_SENSOR = "enable_power_state_sensor"
+
 # Setup methods - simplified for device-based architecture
 SETUP_MANUAL = "manual"
 SETUP_IMPORT = "import"  # For migration from YAML config
@@ -48,10 +56,20 @@ V2_STATE_DESCRIPTIONS = {
     0x0B: "On",
 }
 
-# Scan intervals (in seconds)
-INFO_SENSOR_SCAN_INTERVAL = 1800  # 30 minutes - for static info sensors
-POWER_STATE_SCAN_INTERVAL = 5  # 5 seconds - for power state sensor
-STANDBY_SWITCH_SCAN_INTERVAL = 5  # 5 seconds - for standby switch
+# Default scan intervals (in seconds)
+DEFAULT_INFO_SCAN_INTERVAL = 1800  # 30 minutes - for static info sensors
+DEFAULT_POWER_STATE_SCAN_INTERVAL = 5  # 5 seconds - for power state sensor
+DEFAULT_STANDBY_SCAN_INTERVAL = 5  # 5 seconds - for standby switch
+DEFAULT_CONNECTION_TIMEOUT = 10  # 10 seconds - BLE connection timeout
+
+# Default sensor enablement
+DEFAULT_ENABLE_INFO_SENSORS = True  # Enable device info sensors by default
+DEFAULT_ENABLE_POWER_STATE_SENSOR = True  # Enable power state sensor by default
+
+# Legacy constants for backward compatibility
+INFO_SENSOR_SCAN_INTERVAL = DEFAULT_INFO_SCAN_INTERVAL
+POWER_STATE_SCAN_INTERVAL = DEFAULT_POWER_STATE_SCAN_INTERVAL
+STANDBY_SWITCH_SCAN_INTERVAL = DEFAULT_STANDBY_SCAN_INTERVAL
 
 # Initial device info setup retries
 INITIAL_RETRY_DELAY = 2  # seconds
