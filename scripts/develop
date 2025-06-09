@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+
+set -e
+
+. "$(dirname "$0")"/_common
+
+# Start Home Assistant
+hass --config "${PWD}/config" --debug
