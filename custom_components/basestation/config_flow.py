@@ -7,30 +7,24 @@ import re
 from typing import TYPE_CHECKING, Any
 
 import voluptuous as vol
-from bleak import BleakScanner
-from bleak.exc import BleakError
 from homeassistant import config_entries
-from homeassistant.components.bluetooth import async_scanner_count
+from homeassistant.components.bluetooth import BluetoothServiceInfoBleak
 from homeassistant.const import CONF_MAC, CONF_NAME
 
 from .const import (
     CONF_DEVICE_TYPE,
-    CONF_DISCOVERY_PREFIX,
     CONF_PAIR_ID,
     CONF_SETUP_METHOD,
     DEVICE_TYPE_V1,
     DEVICE_TYPE_V2,
     DOMAIN,
-    SETUP_AUTOMATIC,
     SETUP_IMPORT,
     SETUP_MANUAL,
-    SETUP_SELECTION,
     V1_NAME_PREFIX,
     V2_NAME_PREFIX,
 )
 
 if TYPE_CHECKING:
-    from bleak.backends.device import BLEDevice
     from homeassistant.config_entries import ConfigFlowResult
 
 _LOGGER = logging.getLogger(__name__)
@@ -48,36 +42,99 @@ class BasestationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     def __init__(self) -> None:
         """Initialize the config flow."""
-        self._discovered_devices: dict[str, BLEDevice] = {}
         self._selected_device_type: str = ""
+        # Store discovery info for bluetooth discovery flows
+        self._discovery_info: BluetoothServiceInfoBleak | None = None
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        """Handle the initial step."""
+        """Handle the initial step - go directly to manual setup."""
+        # When user manually adds integration, go straight to manual setup
+        return await self.async_step_manual()
+
+    async def async_step_bluetooth(self, discovery_info: BluetoothServiceInfoBleak) -> ConfigFlowResult:
+        """Handle bluetooth discovery from Home Assistant's bluetooth integration."""
+        _LOGGER.debug("Bluetooth discovery triggered for device: %s (%s)", discovery_info.name, discovery_info.address)
+
+        # Store the discovery info
+        self._discovery_info = discovery_info
+
+        # Extract device information from the BluetoothServiceInfoBleak object
+        mac = discovery_info.address
+        name = discovery_info.name or "Unknown Basestation"
+
+        # Determine device type based on name
+        device_type = DEVICE_TYPE_V2  # Default to V2
+        if name.startswith(V1_NAME_PREFIX):
+            device_type = DEVICE_TYPE_V1
+        elif name.startswith(V2_NAME_PREFIX):
+            device_type = DEVICE_TYPE_V2
+
+        _LOGGER.info("Discovered %s basestation: %s (%s)", "V1" if device_type == DEVICE_TYPE_V1 else "V2", name, mac)
+
+        # Use MAC address as the unique ID
+        await self.async_set_unique_id(mac.upper())
+        self._abort_if_unique_id_configured()
+
+        # Set title for the discovery flow
+        self.context["title_placeholders"] = {
+            "name": name,
+            "mac": mac[-5:],  # Show last 5 chars of MAC
+            "device_type": "Valve Basestation (V2)" if device_type == DEVICE_TYPE_V2 else "Vive Basestation (V1)",
+        }
+
+        # Store device type for later use
+        self._selected_device_type = device_type
+
+        # Show confirmation step for discovered device
+        return await self.async_step_bluetooth_confirm()
+
+    async def async_step_bluetooth_confirm(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Confirm setup of discovered basestation."""
+        if not self._discovery_info:
+            _LOGGER.error("No discovery info available for bluetooth confirmation")
+            return self.async_abort(reason="invalid_data")
+
+        mac = self._discovery_info.address
+        name = self._discovery_info.name or "Unknown Basestation"
+        device_type = self._selected_device_type
+
         if user_input is None:
             return self.async_show_form(
-                step_id="user",
+                step_id="bluetooth_confirm",
                 data_schema=vol.Schema(
                     {
-                        vol.Required(CONF_SETUP_METHOD, default=SETUP_AUTOMATIC): vol.In(
-                            {
-                                SETUP_AUTOMATIC: "Automatic Setup",
-                                SETUP_SELECTION: "Select from discovered devices",
-                                SETUP_MANUAL: "Manual Setup",
-                            },
-                        ),
-                    },
+                        vol.Optional(CONF_NAME, default=name): str,
+                    }
                 ),
+                description_placeholders={
+                    "name": name,
+                    "mac": mac,
+                    "device_type": "Valve Basestation (V2)"
+                    if device_type == DEVICE_TYPE_V2
+                    else "Vive Basestation (V1)",
+                },
             )
 
-        # Redirect to the appropriate setup method
-        setup_method = user_input[CONF_SETUP_METHOD]
-        if setup_method == SETUP_AUTOMATIC:
-            return await self.async_step_automatic()
+        user_provided_name = user_input.get(CONF_NAME, name)
 
-        if setup_method == SETUP_SELECTION:
-            return await self.async_step_selection()
+        # If this is a V1 device, we need the pair ID
+        if device_type == DEVICE_TYPE_V1:
+            self._selected_mac = mac
+            self._selected_name = user_provided_name
+            return await self.async_step_pair_id()
 
-        return await self.async_step_manual()
+        # For V2 devices, create the entry directly
+        title = user_provided_name if user_provided_name else f"Basestation {mac[-5:]}"
+
+        return self.async_create_entry(
+            title=title,
+            data={
+                CONF_MAC: mac.upper(),
+                CONF_NAME: user_provided_name,
+                CONF_DEVICE_TYPE: device_type,
+                CONF_SETUP_METHOD: "bluetooth_discovery",
+            },
+        )
 
     async def async_step_import(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Import a config entry from configuration.yaml."""
@@ -121,226 +178,12 @@ class BasestationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             },
         )
 
-    async def async_step_automatic(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        """Handle automatic setup."""
-        errors = {}
-
-        # Check if automatic config already exists
-        for entry in self._async_current_entries():
-            if entry.data.get(CONF_SETUP_METHOD) == SETUP_AUTOMATIC:
-                return self.async_abort(reason="already_auto_configured")
-
-        if user_input is None:
-            return self.async_show_form(
-                step_id="automatic",
-                data_schema=vol.Schema(
-                    {
-                        vol.Optional(CONF_DISCOVERY_PREFIX, description={"suggested_value": ""}): str,
-                    },
-                ),
-                description_placeholders={"default_prefixes": f"{V1_NAME_PREFIX} or {V2_NAME_PREFIX}"},
-            )
-
-        prefix = user_input.get(CONF_DISCOVERY_PREFIX, "")
-
-        try:
-            devices = await self._discover_devices()
-        except Exception:
-            _LOGGER.exception("Error discovering devices")
-            errors["base"] = "discovery_error"
-            return self.async_show_form(
-                step_id="automatic",
-                data_schema=vol.Schema(
-                    {
-                        vol.Optional(CONF_DISCOVERY_PREFIX, default=prefix): str,
-                    },
-                ),
-                errors=errors,
-            )
-
-        # Filter for basestation devices or use prefix if specified
-        if prefix:
-            basestation_devices = {
-                addr: device for addr, device in devices.items() if device.name and device.name.startswith(prefix)
-            }
-        else:
-            basestation_devices = {
-                addr: device
-                for addr, device in devices.items()
-                if device.name and (device.name.startswith(V1_NAME_PREFIX) or device.name.startswith(V2_NAME_PREFIX))
-            }
-
-        if not basestation_devices:
-            return self.async_abort(reason="no_devices_found")
-
-        # Process device names to avoid duplication
-        device_entries = []
-        for addr, device in basestation_devices.items():
-            # Determine device type
-            device_type = DEVICE_TYPE_V2  # Default
-            if device.name is not None and device.name.startswith(V1_NAME_PREFIX):
-                device_type = DEVICE_TYPE_V1
-
-            device_entries.append(
-                {
-                    CONF_MAC: addr,
-                    CONF_NAME: device.name,
-                    CONF_DEVICE_TYPE: device_type,
-                },
-            )
-
-        # Create a single config entry for automatic discovery
-        return self.async_create_entry(
-            title="Automatic Basestation Discovery",
-            data={
-                CONF_SETUP_METHOD: SETUP_AUTOMATIC,
-                CONF_DISCOVERY_PREFIX: prefix,
-                "devices": device_entries,
-            },
-        )
-
-    async def async_step_selection(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        """Handle device selection."""
-        errors = {}
-
-        try:
-            devices = await self._discover_devices()
-            # Filter for basestation devices
-            self._discovered_devices = {
-                addr: device
-                for addr, device in devices.items()
-                if device.name and (device.name.startswith(V1_NAME_PREFIX) or device.name.startswith(V2_NAME_PREFIX))
-            }
-        except Exception:
-            _LOGGER.exception("Error discovering devices")
-            errors["base"] = "discovery_error"
-            return self.async_show_form(
-                step_id="selection",
-                errors=errors,
-            )
-
-        if not self._discovered_devices:
-            return self.async_abort(reason="no_devices_found")
-
-        if user_input is None:
-            return self.async_show_form(
-                step_id="selection",
-                data_schema=vol.Schema(
-                    {
-                        vol.Required("device_selection"): vol.In(
-                            {
-                                addr: f"{device.name} ({addr})" if device.name else addr
-                                for addr, device in self._discovered_devices.items()
-                            },
-                        ),
-                        vol.Optional(CONF_NAME): str,
-                    },
-                ),
-            )
-
-        device_selection = user_input["device_selection"]
-        user_provided_name = user_input.get(CONF_NAME)
-
-        # Use device address as the unique ID
-        await self.async_set_unique_id(device_selection)
-        self._abort_if_unique_id_configured()
-
-        device = self._discovered_devices[device_selection]
-
-        # Determine device type based on name
-        device_type = DEVICE_TYPE_V2  # Default
-        if device.name is not None and device.name.startswith(V1_NAME_PREFIX):
-            device_type = DEVICE_TYPE_V1
-            # For V1 devices, we need to proceed to the pair ID step
-            self._selected_device_type = device_type
-            self._selected_mac = device_selection
-            self._selected_name = user_provided_name or device.name
-
-            return await self.async_step_pair_id()
-
-        # If device has a name, use it directly without appending anything
-        if user_provided_name:
-            name = user_provided_name
-            title = user_provided_name
-        elif device.name:
-            name = device.name
-            title = device.name
-        else:
-            # If no device name, use a generic name with last 5 chars of MAC
-            short_id = device_selection[-5:]
-            name = f"Basestation {short_id}"
-            title = name
-
-        return self.async_create_entry(
-            title=title,
-            data={
-                CONF_MAC: device_selection,
-                CONF_NAME: name,
-                CONF_DEVICE_TYPE: device_type,
-                CONF_SETUP_METHOD: SETUP_SELECTION,
-            },
-        )
-
-    async def async_step_pair_id(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        """Handle Vive basestation pair ID input."""
-        errors = {}
-
-        if user_input is None:
-            return self.async_show_form(
-                step_id="pair_id",
-                data_schema=vol.Schema(
-                    {
-                        vol.Required(CONF_PAIR_ID): str,
-                    },
-                ),
-                description_placeholders={
-                    "device_name": self._selected_name,
-                },
-            )
-
-        pair_id_str = user_input[CONF_PAIR_ID]
-
-        # Validate pair ID format
-        if not re.match(PAIR_ID_REGEX, pair_id_str):
-            errors[CONF_PAIR_ID] = "invalid_pair_id"
-            return self.async_show_form(
-                step_id="pair_id",
-                data_schema=vol.Schema(
-                    {
-                        vol.Required(CONF_PAIR_ID): str,
-                    },
-                ),
-                errors=errors,
-                description_placeholders={
-                    "device_name": self._selected_name,
-                },
-            )
-
-        # Convert pair ID to integer
-        if pair_id_str.startswith("0x"):
-            pair_id = int(pair_id_str, 16)
-        else:
-            try:
-                pair_id = int(pair_id_str, 16)
-            except ValueError:
-                pair_id = int(pair_id_str)
-
-        return self.async_create_entry(
-            title=self._selected_name,
-            data={
-                CONF_MAC: self._selected_mac,
-                CONF_NAME: self._selected_name,
-                CONF_DEVICE_TYPE: self._selected_device_type,
-                CONF_PAIR_ID: pair_id,
-                CONF_SETUP_METHOD: SETUP_SELECTION,
-            },
-        )
-
     async def async_step_manual(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        """Handle manual setup."""
+        """Handle manual setup - this is the main manual entry point."""
         errors: dict[str, str] = {}
 
         if user_input is None:
+            # Show the manual setup form
             return self.async_show_form(
                 step_id="manual",
                 data_schema=vol.Schema(
@@ -358,7 +201,7 @@ class BasestationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors=errors,
             )
 
-        # Format MAC address consistently
+        # Process the submitted form data
         mac = user_input[CONF_MAC].upper()
         mac = mac.replace("-", ":").replace(" ", "")
 
@@ -369,7 +212,7 @@ class BasestationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         user_provided_name = user_input.get(CONF_NAME)
         device_type = user_input[CONF_DEVICE_TYPE]
 
-        # Validate MAC address
+        # Validate MAC address format
         if not _validate_mac(mac):
             errors["base"] = "invalid_mac"
             return self.async_show_form(
@@ -389,23 +232,23 @@ class BasestationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors=errors,
             )
 
-        # Use MAC address as the unique ID
+        # Use MAC address as the unique ID to prevent duplicates
         await self.async_set_unique_id(mac)
         self._abort_if_unique_id_configured()
 
-        # If this is a V1 device, we need the pair ID
+        # If this is a V1 device, we need the pair ID before we can continue
         if device_type == DEVICE_TYPE_V1:
             self._selected_device_type = device_type
             self._selected_mac = mac
             self._selected_name = user_provided_name or f"Vive Basestation {mac[-5:]}"
-
             return await self.async_step_pair_id()
 
-        # For V2 devices, finish the process
+        # For V2 devices, we can create the entry immediately
         if user_provided_name:
             name = user_provided_name
             title = user_provided_name
         else:
+            # Generate a friendly name using the last 5 characters of MAC
             short_id = mac[-5:]
             name = f"Valve Basestation {short_id}"
             title = name
@@ -420,27 +263,78 @@ class BasestationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             },
         )
 
-    async def _discover_devices(self) -> dict[str, BLEDevice]:
-        """
-        Discover BLE devices with error handling.
+    async def async_step_pair_id(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Handle Vive basestation pair ID input for V1 devices."""
+        errors = {}
 
-        Raises:
-          BleakError: If any error occurs during discovery
+        if user_input is None:
+            # Show the pair ID input form
+            return self.async_show_form(
+                step_id="pair_id",
+                data_schema=vol.Schema(
+                    {
+                        vol.Required(CONF_PAIR_ID): str,
+                    },
+                ),
+                description_placeholders={
+                    "device_name": self._selected_name,
+                },
+            )
 
-        """
+        pair_id_str = user_input[CONF_PAIR_ID]
+
+        # Validate pair ID format (should be hexadecimal)
+        if not re.match(PAIR_ID_REGEX, pair_id_str):
+            errors[CONF_PAIR_ID] = "invalid_pair_id"
+            return self.async_show_form(
+                step_id="pair_id",
+                data_schema=vol.Schema(
+                    {
+                        vol.Required(CONF_PAIR_ID): str,
+                    },
+                ),
+                errors=errors,
+                description_placeholders={
+                    "device_name": self._selected_name,
+                },
+            )
+
+        # Convert pair ID string to integer
         try:
-            if not async_scanner_count(self.hass):
-                _LOGGER.warning("No Bluetooth scanner available")
-                return {}
+            if pair_id_str.startswith("0x"):
+                pair_id = int(pair_id_str, 16)
+            else:
+                # Try hex first, then decimal if that fails
+                try:
+                    pair_id = int(pair_id_str, 16)
+                except ValueError:
+                    pair_id = int(pair_id_str)
+        except ValueError:
+            errors[CONF_PAIR_ID] = "invalid_pair_id"
+            return self.async_show_form(
+                step_id="pair_id",
+                data_schema=vol.Schema(
+                    {
+                        vol.Required(CONF_PAIR_ID): str,
+                    },
+                ),
+                errors=errors,
+                description_placeholders={
+                    "device_name": self._selected_name,
+                },
+            )
 
-            devices = await BleakScanner.discover()
-            return {device.address: device for device in devices if device.address and device.name}
-        except BleakError as err:
-            _LOGGER.warning("BLE error during device discovery: %s", err)
-            raise
-        except Exception:
-            _LOGGER.exception("Error during device discovery")
-            raise
+        # Create the config entry for the V1 basestation
+        return self.async_create_entry(
+            title=self._selected_name,
+            data={
+                CONF_MAC: self._selected_mac,
+                CONF_NAME: self._selected_name,
+                CONF_DEVICE_TYPE: self._selected_device_type,
+                CONF_PAIR_ID: pair_id,
+                CONF_SETUP_METHOD: SETUP_MANUAL,
+            },
+        )
 
 
 def _validate_mac(mac: str) -> bool:

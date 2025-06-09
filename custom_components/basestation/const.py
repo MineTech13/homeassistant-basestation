@@ -29,20 +29,14 @@ MANUFACTURER_CHARACTERISTIC = "00002A29-0000-1000-8000-00805F9B34FB"
 CONF_DEVICE_TYPE = "device_type"
 CONF_PAIR_ID = "pair_id"  # For V1 basestations
 CONF_SETUP_METHOD = "setup_method"
-CONF_DISCOVERY_PREFIX = "discovery_prefix"
 
-# Setup methods
-SETUP_AUTOMATIC = "automatic"
-SETUP_SELECTION = "selection"
+# Setup methods - simplified for device-based architecture
 SETUP_MANUAL = "manual"
-SETUP_IMPORT = "import"  # Added for migration from YAML config
+SETUP_IMPORT = "import"  # For migration from YAML config
 
-# Name prefixes for automatic discovery
+# Name prefixes for bluetooth device recognition
 V1_NAME_PREFIX = "HTC BS"
 V2_NAME_PREFIX = "LHB-"
-
-# Discovery settings
-DISCOVERY_INTERVAL = 60  # seconds
 
 # Power state descriptions for V2 basestations
 V2_STATE_DESCRIPTIONS = {

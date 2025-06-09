@@ -101,72 +101,41 @@ async def async_setup_entry(
     """Set up the basestation switch from a config entry."""
     _LOGGER.debug("Setting up basestation switch entities for entry: %s", entry.title)
 
-    # Get config entry data
-    if entry.data.get("setup_method") == "automatic":
-        # For automatic setup, create entities for each discovered device
-        devices = entry.data.get("devices", [])
-        _LOGGER.debug("Setting up %d automatically discovered devices", len(devices))
-        entities = []
+    # Get device configuration from the config entry
+    mac = entry.data.get(CONF_MAC)
+    name = entry.data.get(CONF_NAME)
+    device_type = entry.data.get(CONF_DEVICE_TYPE)
+    pair_id = entry.data.get(CONF_PAIR_ID)
+    setup_method = entry.data.get("setup_method", "unknown")
 
-        for device_data in devices:
-            mac = device_data.get(CONF_MAC)
-            name = device_data.get(CONF_NAME)
-            device_type = device_data.get(CONF_DEVICE_TYPE, entry.data.get(CONF_DEVICE_TYPE))
-            pair_id = device_data.get(CONF_PAIR_ID)
+    if not mac:
+        _LOGGER.error("No MAC address found in config entry data: %s", entry.data)
+        return
 
-            if not mac:
-                _LOGGER.warning("Skipping device without MAC address in automatic setup")
-                continue
+    _LOGGER.debug("Creating device for MAC: %s, Name: %s, Type: %s, Method: %s", mac, name, device_type, setup_method)
 
-            _LOGGER.debug("Creating device for MAC: %s, Name: %s, Type: %s", mac, name, device_type)
-            device = get_basestation_device(hass, mac, name=name, device_type=device_type, pair_id=pair_id)
-            if device:
-                entities.append(BasestationSwitch(device, entry.entry_id))
+    # Create the basestation device instance
+    device = get_basestation_device(hass, mac, name=name, device_type=device_type, pair_id=pair_id)
 
-                # Add standby switch for Valve basestations
-                if isinstance(device, ValveBasestationDevice):
-                    entities.append(BasestationStandbySwitch(device, entry.entry_id))
-                    _LOGGER.debug("Added standby switch for Valve basestation: %s", mac)
+    if not device:
+        _LOGGER.error("Failed to create device for MAC: %s", mac)
+        return
 
-        if entities:
-            async_add_entities(entities, update_before_add=True)
-            _LOGGER.info("Successfully added %d entities for automatic setup", len(entities))
-        else:
-            _LOGGER.warning("No entities created for automatic setup")
+    # Create the switch entities for this device
+    entities = [BasestationSwitch(device, entry.entry_id)]
 
-    else:
-        # For manual, selection, or import setup, create entity for the single device
-        mac = entry.data.get(CONF_MAC)
-        name = entry.data.get(CONF_NAME)
-        device_type = entry.data.get(CONF_DEVICE_TYPE)
-        pair_id = entry.data.get(CONF_PAIR_ID)
-        setup_method = entry.data.get("setup_method", "unknown")
+    # Add standby switch for Valve basestations (V2 devices)
+    if isinstance(device, ValveBasestationDevice):
+        entities.append(BasestationStandbySwitch(device, entry.entry_id))
+        _LOGGER.debug("Added standby switch for Valve basestation: %s", mac)
 
-        if not mac:
-            _LOGGER.error("No MAC address found in config entry data: %s", entry.data)
-            return
-
-        _LOGGER.debug(
-            "Creating single device for MAC: %s, Name: %s, Type: %s, Method: %s", mac, name, device_type, setup_method
-        )
-
-        device = get_basestation_device(hass, mac, name=name, device_type=device_type, pair_id=pair_id)
-        if device:
-            entities = [BasestationSwitch(device, entry.entry_id)]
-
-            # Add standby switch for Valve basestations
-            if isinstance(device, ValveBasestationDevice):
-                entities.append(BasestationStandbySwitch(device, entry.entry_id))
-                _LOGGER.debug("Added standby switch for Valve basestation: %s", mac)
-
-            async_add_entities(entities, update_before_add=True)
-            _LOGGER.info("Successfully added %d entities for %s setup: %s", len(entities), setup_method, name or mac)
-        else:
-            _LOGGER.error("Failed to create device for MAC: %s", mac)
+    # Add all entities to Home Assistant
+    async_add_entities(entities, update_before_add=True)
+    _LOGGER.info("Successfully added %d switch entities for %s setup: %s", len(entities), setup_method, name or mac)
 
 
 class BasestationSwitch(SwitchEntity):
-    """Representation of a basestation switch."""
+    """Representation of a basestation main power switch."""
 
     def __init__(self, device: BasestationDevice, entry_id: str) -> None:
         """Initialize the switch."""
@@ -240,7 +209,7 @@ class BasestationStandbySwitch(SwitchEntity):
     """Representation of a basestation standby switch (V2 only)."""
 
     def __init__(self, device: BasestationDevice, entry_id: str) -> None:
-        """Initialize the switch."""
+        """Initialize the standby switch."""
         self._device = device
         self._entry_id = entry_id
         self._attr_unique_id = f"basestation_{device.mac}_standby"
