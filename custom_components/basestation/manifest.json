@@ -1,7 +1,6 @@
 {
   "domain": "basestation",
   "name": "VR Basestation",
-  "integration_type": "device",
   "bluetooth": [
     {
       "local_name": "LHB-*"
@@ -21,6 +20,7 @@
     "bluetooth"
   ],
   "documentation": "https://github.com/minetech13/homeassistant-basestation",
+  "integration_type": "device",
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/minetech13/homeassistant-basestation/issues",
   "requirements": [
