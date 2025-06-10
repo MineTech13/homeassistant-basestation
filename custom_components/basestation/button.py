@@ -90,8 +90,8 @@ class BasestationIdentifyButton(ButtonEntity):
                 # Call the identify function which will make the basestation LED blink
                 await self._device.identify()
                 _LOGGER.debug("Identify command sent successfully to %s", self._device.mac)
-            except Exception as e:
-                _LOGGER.error("Failed to send identify command to %s: %s", self._device.mac, e)
+            except Exception:
+                _LOGGER.exception("Failed to send identify command to %s", self._device.mac)
             finally:
                 self._pressed = False
 

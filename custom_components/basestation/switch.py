@@ -5,7 +5,7 @@ import time
 from typing import Any
 
 from homeassistant.components.switch import SwitchEntity
-from homeassistant.config_entries import ConfigEntry, SOURCE_IMPORT
+from homeassistant.config_entries import SOURCE_IMPORT, ConfigEntry
 from homeassistant.const import CONF_MAC, CONF_NAME
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
@@ -15,6 +15,7 @@ from .const import (
     CONF_DEVICE_TYPE,
     CONF_PAIR_ID,
     DOMAIN,
+    STANDBY_STATE_VALUE,
     STANDBY_SWITCH_SCAN_INTERVAL,
 )
 from .device import (
@@ -28,8 +29,17 @@ _LOGGER = logging.getLogger(__name__)
 # Track MAC addresses that have been notified about migration
 NOTIFIED_MACS = set()
 
+# Constants for magic numbers
+MAC_LENGTH_NO_SEPARATORS = 12
+MAC_SEPARATOR_INTERVAL = 2
 
-def setup_platform(hass: HomeAssistant, config: dict, add_entities, discovery_info=None):
+
+def setup_platform(
+    hass: HomeAssistant,
+    config: dict,
+    _add_entities: Any,
+    _discovery_info: Any = None,
+) -> bool:
     """Set up the basestation platform from YAML configuration and trigger migration."""
     _LOGGER.info("Found YAML configuration for basestation, starting migration to config entries")
 
@@ -42,8 +52,11 @@ def setup_platform(hass: HomeAssistant, config: dict, add_entities, discovery_in
 
     # Format MAC address consistently
     formatted_mac = mac.replace(":", "").replace("-", "").replace(" ", "").upper()
-    if len(formatted_mac) == 12:
-        formatted_mac = ":".join(formatted_mac[i : i + 2] for i in range(0, 12, 2))
+    if len(formatted_mac) == MAC_LENGTH_NO_SEPARATORS:
+        formatted_mac = ":".join(
+            formatted_mac[i : i + MAC_SEPARATOR_INTERVAL]
+            for i in range(0, MAC_LENGTH_NO_SEPARATORS, MAC_SEPARATOR_INTERVAL)
+        )
 
     # Check if we've already processed this MAC address
     if formatted_mac in NOTIFIED_MACS:
@@ -59,14 +72,14 @@ def setup_platform(hass: HomeAssistant, config: dict, add_entities, discovery_in
     }
 
     # Define async function to handle the import flow
-    async def async_start_import():
+    async def async_start_import() -> None:
         """Start the import flow asynchronously."""
         try:
             _LOGGER.info("Starting import flow for basestation %s (%s)", name or "Unnamed", formatted_mac)
             await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_IMPORT}, data=import_data)
             _LOGGER.info("Import flow started successfully for %s", formatted_mac)
-        except Exception as err:
-            _LOGGER.error("Failed to start import flow for %s: %s", formatted_mac, err)
+        except Exception:
+            _LOGGER.exception("Failed to start import flow for %s", formatted_mac)
 
     # Use hass.add_job() to schedule the async work - this is thread-safe
     hass.add_job(async_start_import())
@@ -284,7 +297,7 @@ class BasestationStandbySwitch(SwitchEntity):
             raw_state = await self._device.get_raw_power_state()
 
             # Update standby state - 0x02 is the standby state value
-            if raw_state == 0x02:  # noqa: PLR2004
+            if raw_state == STANDBY_STATE_VALUE:
                 if not self._is_in_standby:
                     self._is_in_standby = True
                     _LOGGER.debug("Standby state changed to ON for %s", self._device.mac)

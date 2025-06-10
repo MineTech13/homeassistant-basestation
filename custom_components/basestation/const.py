@@ -77,3 +77,6 @@ MAX_INITIAL_RETRIES = 3  # number of retries
 
 # Number of failures allowed before operation is considered unsuccessful
 MAX_CONSECUTIVE_FAILURES = 3
+
+# Magic number constants to avoid PLR2004 violations
+STANDBY_STATE_VALUE = 0x02  # State value for standby mode

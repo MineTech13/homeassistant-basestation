@@ -56,6 +56,50 @@ async def async_setup_entry(
     _LOGGER.debug("Setting up basestation sensor entities for entry: %s", entry.title)
 
     # Get device configuration from the config entry
+    device_config = _extract_device_config(entry)
+    if not device_config:
+        return
+
+    # Create the basestation device instance with user-configured timeout
+    device = get_basestation_device(
+        hass,
+        device_config["mac"],
+        name=device_config["name"],
+        device_type=device_config["device_type"],
+        pair_id=device_config["pair_id"],
+        connection_timeout=device_config["connection_timeout"],
+    )
+
+    if not device:
+        _LOGGER.error("Failed to create device for MAC: %s", device_config["mac"])
+        return
+
+    # Try initial device info read with retries (only if info sensors are enabled)
+    if device_config["enable_info_sensors"]:
+        await _perform_initial_device_info_read(device, device_config["mac"])
+
+    # Create sensor entities based on user preferences
+    entities = _create_sensor_entities(device, device_config)
+
+    # Add all sensor entities to Home Assistant
+    if entities:
+        async_add_entities(entities, update_before_add=True)
+        _LOGGER.info(
+            "Successfully added %d sensor entities for %s setup: %s",
+            len(entities),
+            device_config["setup_method"],
+            device_config["name"] or device_config["mac"],
+        )
+    else:
+        _LOGGER.info(
+            "No sensor entities enabled for %s setup: %s",
+            device_config["setup_method"],
+            device_config["name"] or device_config["mac"],
+        )
+
+
+def _extract_device_config(entry: ConfigEntry) -> dict[str, Any] | None:
+    """Extract and validate device configuration from config entry."""
     mac = entry.data.get(CONF_MAC)
     name = entry.data.get(CONF_NAME)
     device_type = entry.data.get(CONF_DEVICE_TYPE)
@@ -76,89 +120,110 @@ async def async_setup_entry(
 
     if not mac:
         _LOGGER.error("No MAC address found in config entry data: %s", entry.data)
-        return
+        return None
 
     _LOGGER.info("Setting up sensors for device: %s (%s)", name or mac, mac)
 
-    # Create the basestation device instance with user-configured timeout
-    device = get_basestation_device(
-        hass,
-        mac,
-        name=name,
-        device_type=device_type,
-        pair_id=pair_id,
-        connection_timeout=connection_timeout,  # Pass timeout to device
-    )
+    return {
+        "mac": mac,
+        "name": name,
+        "device_type": device_type,
+        "pair_id": pair_id,
+        "setup_method": setup_method,
+        "enable_info_sensors": enable_info_sensors,
+        "enable_power_state_sensor": enable_power_state_sensor,
+        "info_scan_interval": info_scan_interval,
+        "power_state_scan_interval": power_state_scan_interval,
+        "connection_timeout": connection_timeout,
+    }
 
-    if not device:
-        _LOGGER.error("Failed to create device for MAC: %s", mac)
-        return
 
-    # Try initial device info read with retries (only if info sensors are enabled)
-    if enable_info_sensors:
-        for retry in range(MAX_INITIAL_RETRIES):
-            try:
-                if retry > 0:
-                    _LOGGER.debug(
-                        "Retry %d/%d for initial device info read for %s",
-                        retry + 1,
-                        MAX_INITIAL_RETRIES,
-                        mac,
-                    )
-                    await asyncio.sleep(INITIAL_RETRY_DELAY * (retry + 1))
-
-                # Force initial read to ensure we get the data
-                device_info = await device.read_device_info(force=True)
-                if device_info:
-                    _LOGGER.info(
-                        "Initial device info read successful for %s: %s",
-                        mac,
-                        ", ".join(device_info.keys()),
-                    )
-                    break
-            except Exception as e:
-                _LOGGER.warning(
-                    "Error during initial device info read for %s (retry %d/%d): %s",
-                    mac,
+async def _perform_initial_device_info_read(device: BasestationDevice, mac: str) -> None:
+    """Perform initial device info read with retries."""
+    for retry in range(MAX_INITIAL_RETRIES):
+        try:
+            if retry > 0:
+                _LOGGER.debug(
+                    "Retry %d/%d for initial device info read for %s",
                     retry + 1,
                     MAX_INITIAL_RETRIES,
-                    e,
+                    mac,
                 )
+                await asyncio.sleep(INITIAL_RETRY_DELAY * (retry + 1))
 
-    # Create sensor entities based on user preferences
+            # Force initial read to ensure we get the data
+            device_info = await device.read_device_info(force=True)
+            if device_info:
+                _LOGGER.info(
+                    "Initial device info read successful for %s: %s",
+                    mac,
+                    ", ".join(device_info.keys()),
+                )
+                break
+        except Exception as e:
+            _LOGGER.warning(
+                "Error during initial device info read for %s (retry %d/%d): %s",
+                mac,
+                retry + 1,
+                MAX_INITIAL_RETRIES,
+                e,
+            )
+
+
+def _create_sensor_entities(device: BasestationDevice, config: dict[str, Any]) -> list[SensorEntity]:
+    """Create sensor entities based on device type and user preferences."""
     entities = []
 
     # Add info sensors only if enabled
-    if enable_info_sensors:
-        entities.extend(
-            [
-                BasestationInfoSensor(device, "firmware", "Firmware", "mdi:developer-board", info_scan_interval),
-                BasestationInfoSensor(device, "model", "Model", "mdi:card-text", info_scan_interval),
-                BasestationInfoSensor(device, "hardware", "Hardware", "mdi:chip", info_scan_interval),
-                BasestationInfoSensor(device, "manufacturer", "Manufacturer", "mdi:factory", info_scan_interval),
-            ]
+    if config["enable_info_sensors"]:
+        entities.extend(_create_info_sensors(device, config["info_scan_interval"]))
+
+    # Add device-specific sensors
+    if isinstance(device, ValveBasestationDevice):
+        entities.extend(_create_valve_sensors(device, config))
+    elif isinstance(device, ViveBasestationDevice):
+        entities.extend(_create_vive_sensors(device, config))
+
+    return entities
+
+
+def _create_info_sensors(device: BasestationDevice, scan_interval: int) -> list[SensorEntity]:
+    """Create common device info sensors."""
+    return [
+        BasestationInfoSensor(device, "firmware", "Firmware", "mdi:developer-board", scan_interval),
+        BasestationInfoSensor(device, "model", "Model", "mdi:card-text", scan_interval),
+        BasestationInfoSensor(device, "hardware", "Hardware", "mdi:chip", scan_interval),
+        BasestationInfoSensor(device, "manufacturer", "Manufacturer", "mdi:factory", scan_interval),
+    ]
+
+
+def _create_valve_sensors(device: ValveBasestationDevice, config: dict[str, Any]) -> list[SensorEntity]:
+    """Create Valve-specific sensors."""
+    entities = []
+
+    if config["enable_info_sensors"]:
+        # Add channel sensor if info sensors are enabled
+        entities.append(
+            BasestationInfoSensor(device, "channel", "Channel", "mdi:radio-tower", config["info_scan_interval"])
         )
 
-    # V2-specific sensors
-    if isinstance(device, ValveBasestationDevice):
-        if enable_info_sensors:
-            # Add channel sensor if info sensors are enabled
-            entities.append(BasestationInfoSensor(device, "channel", "Channel", "mdi:radio-tower", info_scan_interval))
+    if config["enable_power_state_sensor"]:
+        # Add the power state sensor for V2 devices if enabled
+        entities.append(BasestationPowerStateSensor(device, config["power_state_scan_interval"]))
 
-        if enable_power_state_sensor:
-            # Add the power state sensor for V2 devices if enabled
-            entities.append(BasestationPowerStateSensor(device, power_state_scan_interval))
+    return entities
 
-    # V1-specific sensors
-    if isinstance(device, ViveBasestationDevice) and pair_id is not None and enable_info_sensors:
-        entities.append(BasestationInfoSensor(device, "pair_id", "Pair ID", "mdi:key-variant", info_scan_interval))
 
-    # Add all sensor entities to Home Assistant
-    if entities:
-        async_add_entities(entities, update_before_add=True)
-        _LOGGER.info("Successfully added %d sensor entities for %s setup: %s", len(entities), setup_method, name or mac)
-    else:
-        _LOGGER.info("No sensor entities enabled for %s setup: %s", setup_method, name or mac)
+def _create_vive_sensors(device: ViveBasestationDevice, config: dict[str, Any]) -> list[SensorEntity]:
+    """Create Vive-specific sensors."""
+    entities = []
+
+    if device.pair_id is not None and config["enable_info_sensors"]:
+        entities.append(
+            BasestationInfoSensor(device, "pair_id", "Pair ID", "mdi:key-variant", config["info_scan_interval"])
+        )
+
+    return entities
 
 
 class BasestationInfoSensor(SensorEntity):

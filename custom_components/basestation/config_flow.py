@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Any
 
 import voluptuous as vol
 from homeassistant import config_entries
-from homeassistant.components.bluetooth import BluetoothServiceInfoBleak
 from homeassistant.const import CONF_MAC, CONF_NAME
 from homeassistant.core import callback
 
@@ -36,6 +35,7 @@ from .const import (
 )
 
 if TYPE_CHECKING:
+    from homeassistant.components.bluetooth import BluetoothServiceInfoBleak
     from homeassistant.config_entries import ConfigFlowResult, OptionsFlow
 
 _LOGGER = logging.getLogger(__name__)
@@ -44,6 +44,11 @@ _LOGGER = logging.getLogger(__name__)
 MAC_REGEX = r"^([0-9A-Fa-f]{2}[:-]?){5}([0-9A-Fa-f]{2})$"
 # Pair ID regex pattern (hexadecimal value)
 PAIR_ID_REGEX = r"^(0x)?[0-9A-Fa-f]{1,8}$"
+
+# Constants for validation
+MIN_INFO_SCAN_INTERVAL = 300  # 5 minutes minimum
+MIN_CONNECTION_TIMEOUT = 5  # 5 seconds minimum
+MIN_STATE_SCAN_INTERVAL = 1  # 1 second minimum
 
 
 class BasestationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -63,7 +68,7 @@ class BasestationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Create the options flow."""
         return BasestationOptionsFlow(config_entry)
 
-    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+    async def async_step_user(self, _user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Handle the initial step - go directly to manual setup."""
         # When user manually adds integration, go straight to manual setup
         return await self.async_step_manual()
@@ -361,7 +366,7 @@ class BasestationOptionsFlow(config_entries.OptionsFlow):
         """Initialize the options flow."""
         self.config_entry = config_entry
 
-    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+    async def async_step_init(self, _user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Manage the options."""
         return await self.async_step_device_options()
 
@@ -371,16 +376,16 @@ class BasestationOptionsFlow(config_entries.OptionsFlow):
 
         if user_input is not None:
             # Validate scan intervals
-            if user_input.get(CONF_INFO_SCAN_INTERVAL, 0) < 300:  # Minimum 5 minutes
+            if user_input.get(CONF_INFO_SCAN_INTERVAL, 0) < MIN_INFO_SCAN_INTERVAL:
                 errors[CONF_INFO_SCAN_INTERVAL] = "scan_interval_too_low"
 
-            if user_input.get(CONF_POWER_STATE_SCAN_INTERVAL, 0) < 1:  # Minimum 1 second
+            if user_input.get(CONF_POWER_STATE_SCAN_INTERVAL, 0) < MIN_STATE_SCAN_INTERVAL:
                 errors[CONF_POWER_STATE_SCAN_INTERVAL] = "scan_interval_too_low"
 
-            if user_input.get(CONF_STANDBY_SCAN_INTERVAL, 0) < 1:  # Minimum 1 second
+            if user_input.get(CONF_STANDBY_SCAN_INTERVAL, 0) < MIN_STATE_SCAN_INTERVAL:
                 errors[CONF_STANDBY_SCAN_INTERVAL] = "scan_interval_too_low"
 
-            if user_input.get(CONF_CONNECTION_TIMEOUT, 0) < 5:  # Minimum 5 seconds
+            if user_input.get(CONF_CONNECTION_TIMEOUT, 0) < MIN_CONNECTION_TIMEOUT:
                 errors[CONF_CONNECTION_TIMEOUT] = "timeout_too_low"
 
             if not errors:

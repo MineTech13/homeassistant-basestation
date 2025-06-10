@@ -68,6 +68,18 @@ class BLEOperationWrite:
     without_response: bool = False
 
 
+@dataclass
+class DeviceConfig:
+    """Configuration for creating a basestation device."""
+
+    hass: HomeAssistant
+    mac: str
+    name: str | None = None
+    device_type: Literal["valve", "vive"] | None = None
+    pair_id: int | None = None
+    connection_timeout: int = DEFAULT_CONNECTION_TIMEOUT
+
+
 class BasestationDevice(ABC):
     """Base class for basestation devices."""
 
@@ -526,13 +538,14 @@ def get_basestation_device(
     hass: HomeAssistant,
     mac: str,
     /,
-    *,
-    name: str | None,
-    device_type: Literal["valve", "vive"] | None,
-    pair_id: int | None,
-    connection_timeout: int = DEFAULT_CONNECTION_TIMEOUT,
+    **kwargs: Any,
 ) -> BasestationDevice:
     """Create the appropriate device based on the device info."""
+    name = kwargs.get("name")
+    device_type = kwargs.get("device_type")
+    pair_id = kwargs.get("pair_id")
+    connection_timeout = kwargs.get("connection_timeout", DEFAULT_CONNECTION_TIMEOUT)
+
     if device_type == DEVICE_TYPE_V2 or (name and name.startswith(V2_NAME_PREFIX)):
         return ValveBasestationDevice(hass, mac, name, connection_timeout=connection_timeout)
     if device_type == DEVICE_TYPE_V1 or (name and name.startswith(V1_NAME_PREFIX)):
@@ -542,6 +555,18 @@ def get_basestation_device(
     # If we can't determine the type, default to Valve basestation
     _LOGGER.warning("Could not determine device type for %s, defaulting to Valve basestation", mac)
     return ValveBasestationDevice(hass, mac, name, connection_timeout=connection_timeout)
+
+
+def create_basestation_device_from_config(config: DeviceConfig) -> BasestationDevice:
+    """Create a basestation device from a DeviceConfig object."""
+    return get_basestation_device(
+        config.hass,
+        config.mac,
+        name=config.name,
+        device_type=config.device_type,
+        pair_id=config.pair_id,
+        connection_timeout=config.connection_timeout,
+    )
 
 
 async def connect_delay(attempt: int) -> None:
