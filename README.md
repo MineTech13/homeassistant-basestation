@@ -4,15 +4,15 @@
 [![HACS](https://img.shields.io/badge/HACS-Custom-orange.svg?style=for-the-badge)](https://github.com/hacs/integration)
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.2+-blue.svg?style=for-the-badge)](https://home-assistant.io)
 
-A comprehensive Home Assistant integration for managing **Valve Index® Base Stations (V2)** and **HTC Vive Base Stations (V1)**(Currently UNTESTED working on that thooo) through Bluetooth Low Energy (BLE). Control power states, monitor device information, and automate your VR setup with ease.
+A comprehensive Home Assistant integration for managing **Valve Index® Base Stations (V2)** and **HTC Vive Base Stations (V1)** ([UNTESTED](https://github.com/MineTech13/homeassistant-basestation/issues/4)) through Bluetooth Low Energy (BLE). Control power states, monitor device information, and automate your VR setup with ease.
 
 ---
 
 ## ✨ Key Features
 
-### 🎮 **Universal VR Support**
+### 🎮 **Universal VR Lighthouse Support**
 - **Valve Index Base Stations (V2)** - Full feature support
-- **HTC Vive Base Stations (V1)** - UNTESTED WIP
+- **HTC Vive Base Stations (V1)** - UNTESTED/WIP, see [#4](https://github.com/MineTech13/homeassistant-basestation/issues/4)
 
 ### 🔄 **Advanced Power Management**
 - **Power Control** - Turn base stations on/off remotely
@@ -213,7 +213,7 @@ Transform your VR setup with smart automations:
 
 ### Primary Developers
 - **[@MineTech13](https://github.com/MineTech13)** - Complete v2.0 architecture, config flow, device abstraction, and feature development
-- **[@invisi]** - V2.0 development collaboration and testing
+- **[@Invisi](https://github.com/Invisi)** - V2.0 development collaboration and testing
 
 ### Original Foundation
 - **[@jariz](https://github.com/jariz)** - Original basic implementation and BLE communication foundation
