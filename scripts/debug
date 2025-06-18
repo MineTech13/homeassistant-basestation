@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+
+set -e
+
+. "$(dirname "$0")"/_common
+
+# Start Home Assistant
+python -m debugpy \
+    --listen 127.0.0.1:5678 \
+    --wait-for-client \
+    -m homeassistant --config "${PWD}/config" --debug

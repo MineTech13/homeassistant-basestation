@@ -1,11 +1,30 @@
 {
   "domain": "basestation",
-  "name": "Valve Index Basestation",
-  "codeowners": ["@jariz", "@TCL987", "@MineTech13"],
-  "config_flow": false,
-  "dependencies": ["bluetooth"],
+  "name": "VR Basestation",
+  "bluetooth": [
+    {
+      "local_name": "LHB-*"
+    },
+    {
+      "local_name": "HTC BS*"
+    }
+  ],
+  "codeowners": [
+    "@MineTech13",
+    "@Invisi",
+    "@jariz",
+    "@TCL987"
+  ],
+  "config_flow": true,
+  "dependencies": [
+    "bluetooth"
+  ],
   "documentation": "https://github.com/minetech13/homeassistant-basestation",
+  "integration_type": "device",
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/minetech13/homeassistant-basestation/issues",
-  "version": "1.1.0"
+  "requirements": [
+    "bleak>=0.19.0"
+  ],
+  "version": "2.0.0"
 }

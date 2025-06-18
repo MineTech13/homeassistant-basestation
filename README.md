@@ -1,92 +1,247 @@
-# Valve Basestation integration for Homeassistant
+# VR Basestation Integration for Home Assistant
 
-Read and manage power states for your Valve Index® Base Stations (also referred to as 'Lighthouse V2') through [BLE](https://en.wikipedia.org/wiki/Bluetooth_Low_Energy).
-This is a Combined fork from [@jariz](https://github.com/jariz/homeassistant-basestation), [@TCL987](https://github.com/TCL987/homeassistant-basestation) and the Patch from [@Azelphur](https://github.com/Azelphur/homeassistant-basestation)
+[![GitHub Release](https://img.shields.io/github/v/release/MineTech13/homeassistant-basestation?style=for-the-badge)](https://github.com/MineTech13/homeassistant-basestation/releases)
+[![HACS](https://img.shields.io/badge/HACS-Custom-orange.svg?style=for-the-badge)](https://github.com/hacs/integration)
+[![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.2+-blue.svg?style=for-the-badge)](https://home-assistant.io)
 
-![](https://jari.lol/TYc7q1qt9E.png)  
+A comprehensive Home Assistant integration for managing **Valve Index® Base Stations (V2)** and **HTC Vive Base Stations (V1)** ([UNTESTED](https://github.com/MineTech13/homeassistant-basestation/issues/4)) through Bluetooth Low Energy (BLE). Control power states, monitor device information, and automate your VR setup with ease.
 
-## Installation
-[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=minetech13&repository=homeassistant-basestation&category=integration)
-- Ensure [HACS](https://hacs.xyz) is installed.
-- Go to Community -> Frontend -> press the three dots (top right corner of screen) -> Custom repositories and add the following information: 
-  - Add custom repository URL: https://github.com/minetech13/homeassistant-basestation 
-  - Category: `Integration` 
-  - Press add.
-  - Now in the repository overview, click install next to this repo.
+---
 
-## Will it run?
+## ✨ Key Features
 
-Before configuring Home Assistant you need a Bluetooth backend and the MAC address of your basestation. Depending on your operating system, you may have to configure the proper Bluetooth backend for your system:
+### 🎮 **Universal VR Lighthouse Support**
+- **Valve Index Base Stations (V2)** - Full feature support
+- **HTC Vive Base Stations (V1)** - UNTESTED/WIP, see [#4](https://github.com/MineTech13/homeassistant-basestation/issues/4)
 
-- On [Home Assistant](https://home-assistant.io/hassio/installation/): integration works out of the box.
-- On [Home Assistant Container](https://home-assistant.io/docs/installation/docker/): Works out of the box with `--net=host` and properly configured Bluetooth on the host.
-- On other Linux systems:
-  - Install the `bluepy` library (via pip). When using a virtual environment, make sure to install the library in the right one.
+### 🔄 **Advanced Power Management**
+- **Power Control** - Turn base stations on/off remotely
+- **Standby Mode** - Energy-efficient standby for V2 base stations
+- **Power State Monitoring** - Real-time status tracking
+- **Identify Function** - Blink LEDs to locate specific base stations
 
-## Scan for devices
+### 🛠️ **Modern Integration Features**
+- **Automatic Discovery** - Zero-configuration setup via Bluetooth discovery
+- **Config Flow UI** - Complete graphical configuration (no YAML required)
+- **Device Information** - Firmware, model, hardware, and manufacturer details
+- **Multiple Entity Types** - Switches, sensors, and buttons for comprehensive control
+- **YAML Migration** - Automatic upgrade from legacy configurations
 
-Start a scan to determine the MAC addresses of your basestations (you can identify a basestation by looking for entries starting with `LHB-`, for example: `LHB-F27AE376`) using this command:
+### ⚙️ **Professional Features**
+- **Connection Management** - Advanced BLE connection pooling and retry logic
+- **Configurable Timeouts** - User-adjustable connection and scan intervals
+- **Device Registry Integration** - Proper Home Assistant device management
+- **Translation Support** - Multi-language interface
+- **Options Flow** - Advanced settings without reconfiguration
+
+---
+
+## 🚀 Installation
+
+### Via HACS (Recommended)
+
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=MineTech13&repository=homeassistant-basestation&category=integration)
+
+1. **Install HACS** - Ensure [HACS](https://hacs.xyz) is installed and configured
+2. **Add Custom Repository**:
+   - Go to **HACS** → **Integrations** → **⋮** (menu) → **Custom repositories**
+   - Add: `https://github.com/MineTech13/homeassistant-basestation`
+   - Category: **Integration**
+3. **Install Integration** - Find "VR Basestation" and click **Install**
+4. **Restart Home Assistant**
+
+### Manual Installation
+
+1. Download the latest release from [GitHub Releases](https://github.com/MineTech13/homeassistant-basestation/releases)
+2. Extract to `custom_components/basestation/` in your Home Assistant config directory
+3. Restart Home Assistant
+
+---
+
+## ⚡ Quick Setup
+
+### Automatic Discovery (Easiest)
+
+1. Navigate to **Settings** → **Devices & Services**
+2. Look for automatically discovered VR base stations
+3. Click **Configure** and follow the setup wizard
+
+### Manual Setup
+
+1. **Settings** → **Devices & Services** → **Add Integration**
+2. Search for **"VR Basestation"**
+3. Enter MAC address and device type
+
+### Finding MAC Addresses
+
+If you need to find your base station MAC addresses manually:
 
 ```bash
-$ sudo hcitool lescan
-LE Scan ...
-1B:BE:05:0D:B0:5C (unknown)
-F3:C7:68:BB:23:0B LHB-60B5777F
-F7:8A:B0:FD:08:B5 LHB-F27AE376
-[...]
+# Using hcitool (Linux)
+sudo hcitool lescan
+# Look for devices starting with "LHB-" (V2) or "HTC BS" (V1)
+
+# Using bluetoothctl
+bluetoothctl
+scan on
+# Wait for devices to appear
 ```
 
-Or, if your distribution is using bluetoothctl use the following commands:
+**Alternative Methods:**
+- **Android**: Use "BLE Scanner" or "nrf Connect" app from Play Store
+- **Windows**: Use "Microsoft Bluetooth LE Explorer" from Windows Store
+- **SteamVR**: Check device serial numbers in SteamVR settings
 
-```bash
-$ bluetoothctl
-[bluetooth]# scan on
-[NEW] Controller <your Bluetooth adapter> [default]
-[NEW] Device F3:C7:68:BB:23:0B LHB-60B5777F
-```
+---
 
-If you can't use `hcitool` or `bluetoothctl` but have access to an Android phone you can try `BLE Scanner` or similar scanner applications from the Play Store to easily find your sensor MAC address. If you are using Windows 10, try the `Microsoft Bluetooth LE Explorer` app from the Windows Store.
+## 📊 Entity Overview
 
-## Configuration
+Each base station creates multiple entities for comprehensive control:
 
-To use your basestation(s) in your installation, add the following to your `configuration.yaml` file:
+### 🔘 **Switches**
+- **Power Switch** - Main on/off control
+- **Standby Switch** *(V2 only)* - Energy-efficient standby mode
+
+### 📈 **Sensors** *(Optional)*
+- **Firmware Version** - Current firmware information
+- **Model Number** - Device model details
+- **Hardware Version** - Hardware revision
+- **Manufacturer** - Device manufacturer
+- **Channel** *(V2 only)* - Communication channel
+- **Power State** *(V2 only)* - Detailed power status
+- **Pair ID** *(V1 only)* - Pair identification
+
+### 🔵 **Buttons**
+- **Identify Button** *(V2 only)* - Blink LED for device identification
+
+---
+
+## 🔧 Advanced Configuration
+
+### Device Options
+
+Access advanced settings via **Settings** → **Devices & Services** → **VR Basestation** → **Configure**:
+
+- **Device Name** - Custom friendly name
+- **Scan Intervals** - Adjust update frequencies
+- **Connection Timeout** - BLE connection timeout
+- **Sensor Control** - Enable/disable specific sensors
+- **Power State Monitoring** - Control detailed state tracking
+
+### Automation Integration
 
 ```yaml
-# Example configuration.yaml entry
-switch:
-  - platform: basestation
-    mac: "xx:xx:xx:xx:xx:xx"
+# Example: Turn on base stations when lights turn on
+automation:
+  - alias: "VR Room Activated"
+    trigger:
+      - platform: state
+        entity_id: light.vr_room
+        to: "on"
+    action:
+      - service: switch.turn_on
+        target:
+          entity_id:
+            - switch.valve_basestation_1
+            - switch.valve_basestation_2
+
+# Example: Auto-standby after 30 minutes of inactivity
+  - alias: "VR Auto Standby"
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.vr_room_motion
+        to: "off"
+        for: "00:30:00"
+    action:
+      - service: switch.turn_on
+        target:
+          entity_id:
+            - switch.valve_basestation_1_standby_mode
+            - switch.valve_basestation_2_standby_mode
 ```
 
-### More expansive example
+### Grouping Base Stations
 
-Since you'll probably be adding more than 1 basestation, it's a good idea to use the [group integration](https://www.home-assistant.io/integrations/group) to group them together and control them all at once.
+Create groups for easy control:
 
-```yaml
-group:
-  basestations:
-    name: Basestations
-    entities:
-      - switch.lhb_1
-      - switch.lhb_2
+1. **Settings** → **Devices & Services** → **Helpers**
+2. **Create Helper** → **Group**
+3. Add all base station switches
+4. Control all base stations with one entity
 
-switch:
-  - platform: basestation
-    mac: "xx:xx:xx:xx:xx:xx"
-    name: "LHB 1"
-  - platform: basestation
-    mac: "xx:xx:xx:xx:xx:xx"
-    name: "LHB 2"
-```
+---
 
-## Automation ideas
+## 🛠️ Troubleshooting
 
-- Turn the airco on when your VR equipment activates.
-- Turn your basestations off/on when you turn off/on the lights
-- Turn your basestations off if there's no motion detected in the room anymore, or if you've left the house.
-- Start your computer (wake on lan), VR equipment, and screen (power plug) all at once.
+### Common Issues
 
-## Final notes
+**Base stations not discovered:**
+- Ensure Bluetooth is enabled and working
+- Check base stations are powered and not in sleep mode
+- Verify Home Assistant has Bluetooth access
 
-- Yes, BLE does not conmmunicate well over long range.
-- Largely inspired by [the miflora integration](https://github.com/home-assistant/core/tree/dev/homeassistant/components/miflora), thanks!
+**Connection timeouts:**
+- Increase connection timeout in device options
+- Check Bluetooth adapter range and interference
+- Ensure base stations aren't in use by SteamVR
+
+### Migration from YAML
+
+The integration automatically migrates old YAML configurations:
+
+1. **Backup** your configuration.yaml
+2. **Install** the new integration
+3. **Configure** devices through the UI
+4. **Remove** old YAML entries after successful migration
+
+---
+
+## 💡 Automation Ideas
+
+Transform your VR setup with smart automations:
+
+- **🌡️ Climate Control** - Auto-adjust AC when VR session starts
+- **💡 Lighting** - Sync base stations with room lighting
+- **🏠 Presence Detection** - Turn off when leaving home
+- **💻 System Integration** - Wake PC, start SteamVR, control displays
+- **⏰ Scheduled Power** - Auto-standby during sleep hours
+- **🔋 Energy Management** - Smart power saving based on usage patterns
+
+---
+
+## 🏆 Credits & Acknowledgments
+
+### Primary Developers
+- **[@MineTech13](https://github.com/MineTech13)** - Complete v2.0 architecture, config flow, device abstraction, and feature development
+- **[@Invisi](https://github.com/Invisi)** - V2.0 development collaboration and testing
+
+### Original Foundation
+- **[@jariz](https://github.com/jariz)** - Original basic implementation and BLE communication foundation
+- **[@TCL987](https://github.com/TCL987)** - Early improvements and community contributions
+- **[@Azelphur](https://github.com/Azelphur)** - Patches and compatibility fixes
+
+### Technical References
+- **[jeroen1602/lighthouse_pm](https://github.com/jeroen1602/lighthouse_pm)** - BLE protocol reference
+- **[Home Assistant Community](https://community.home-assistant.io)** - Testing, feedback, and feature requests
+
+---
+
+## 📝 Technical Notes
+
+- **BLE Range Limitation** - Bluetooth Low Energy has limited range; consider BLE proxies for extended coverage
+- **Power Management** - V2 base stations support multiple power states (On, Standby, Sleep)
+- **Concurrent Access** - Base stations can only be controlled by one application at a time
+- **Firmware Updates** - Update base station firmware through SteamVR for best compatibility
+
+---
+
+## 🔗 Links
+
+- **[GitHub Repository](https://github.com/MineTech13/homeassistant-basestation)**
+- **[Issue Tracker](https://github.com/MineTech13/homeassistant-basestation/issues)**
+- **[Home Assistant Community](https://community.home-assistant.io)**
+- **[HACS](https://hacs.xyz)**
+
+---
+
+*Transform your VR setup into a smart, automated experience with the VR Basestation Integration! 🎮✨*

@@ -1,5 +1,6 @@
 {
     "name": "Valve Index Basestation",
-    "homeassistant": "2024.1.0",
+    "homeassistant": "2025.2.4",
+    "hacs": "2.0.1",
     "render_readme": true
   }

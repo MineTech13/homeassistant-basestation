@@ -1,0 +1,109 @@
+{
+  "config": {
+    "step": {
+      "bluetooth_confirm": {
+        "title": "Discovered VR Basestation",
+        "description": "A {device_type} was discovered:\n\n**{name}**\nMAC: {mac}\n\nWould you like to add this basestation to Home Assistant?",
+        "data": {
+          "name": "Custom Name (Optional)"
+        }
+      },
+      "manual": {
+        "title": "Add VR Basestation",
+        "description": "Enter the MAC address and select the type of your basestation. You can find the MAC address using Bluetooth scanning tools or check your VR software.",
+        "data": {
+          "mac": "MAC Address",
+          "name": "Custom Name (Optional)",
+          "device_type": "Device Type"
+        }
+      },
+      "pair_id": {
+        "title": "Vive Basestation Pair ID",
+        "description": "Enter the pair ID for your Vive basestation \"{device_name}\". This is required to control V1 basestations. The pair ID is typically a hexadecimal value like '1A2B3C4D'.",
+        "data": {
+          "pair_id": "Pair ID (hexadecimal)"
+        }
+      }
+    },
+    "error": {
+      "invalid_mac": "Invalid MAC address format. Please use format like AA:BB:CC:DD:EE:FF",
+      "invalid_pair_id": "Invalid pair ID format. Enter a valid hexadecimal value (e.g., 1A2B3C4D)",
+      "invalid_data": "Invalid data provided",
+      "unknown": "Unexpected error occurred"
+    },
+    "abort": {
+      "already_configured": "This basestation is already configured",
+      "no_devices_found": "No VR basestation devices found"
+    }
+  },
+  "options": {
+    "step": {
+      "device_options": {
+        "title": "Configure {device_name}",
+        "description": "Configure settings for your {device_type}. You can adjust scan intervals, timeouts, and enable/disable specific sensors.",
+        "data": {
+          "name": "Device Name",
+          "info_scan_interval": "Device Info Scan Interval (seconds)",
+          "power_state_scan_interval": "Power State Scan Interval (seconds)",
+          "standby_scan_interval": "Standby State Scan Interval (seconds)",
+          "connection_timeout": "Bluetooth Connection Timeout (seconds)",
+          "enable_info_sensors": "Enable Device Information Sensors",
+          "enable_power_state_sensor": "Enable Power State Sensor"
+        },
+        "data_description": {
+          "name": "Custom name for this basestation device",
+          "info_scan_interval": "How often to read device information like firmware and model (minimum 300 seconds)",
+          "power_state_scan_interval": "How often to check the current power state (minimum 1 second, only for Valve basestations)",
+          "standby_scan_interval": "How often to check standby mode status (minimum 1 second, only for Valve basestations)",
+          "connection_timeout": "Maximum time to wait for Bluetooth connections (minimum 5 seconds)",
+          "enable_info_sensors": "Show sensors for firmware, model, hardware, and manufacturer information",
+          "enable_power_state_sensor": "Show sensor displaying current power state (Sleep, Standby, On, etc.)"
+        }
+      }
+    },
+    "error": {
+      "scan_interval_too_low": "Scan interval is too low. Check the minimum values.",
+      "timeout_too_low": "Connection timeout is too low. Minimum is 5 seconds.",
+      "invalid_data": "Invalid configuration data provided",
+      "unknown": "An unexpected error occurred while saving options"
+    }
+  },
+  "entity": {
+    "button": {
+      "identify": {
+        "name": "Identify"
+      }
+    },
+    "sensor": {
+      "firmware": {
+        "name": "Firmware Version"
+      },
+      "model": {
+        "name": "Model Number"
+      },
+      "hardware": {
+        "name": "Hardware Version"
+      },
+      "manufacturer": {
+        "name": "Manufacturer"
+      },
+      "channel": {
+        "name": "Channel"
+      },
+      "pair_id": {
+        "name": "Pair ID"
+      },
+      "power_state": {
+        "name": "Power State"
+      }
+    },
+    "switch": {
+      "power": {
+        "name": "Power"
+      },
+      "standby": {
+        "name": "Standby Mode"
+      }
+    }
+  }
+}
