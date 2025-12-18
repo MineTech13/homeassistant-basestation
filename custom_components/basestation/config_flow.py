@@ -366,7 +366,7 @@ class BasestationOptionsFlow(config_entries.OptionsFlow):
         """Initialize the options flow."""
         self._config_entry = config_entry
 
-    async def async_step_init(self, _user_input=None):
+    async def async_step_init(self, _user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Manage the options."""
         return await self.async_step_device_options()
 
