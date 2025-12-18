@@ -358,16 +358,13 @@ class BasestationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             },
         )
 
-
 class BasestationOptionsFlow(config_entries.OptionsFlow):
     """Handle Basestation options flow."""
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        """Initialize the options flow."""
-        self.config_entry = config_entry
+        self._config_entry = config_entry
 
-    async def async_step_init(self, _user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        """Manage the options."""
+    async def async_step_init(self, _user_input=None):
         return await self.async_step_device_options()
 
     async def async_step_device_options(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
@@ -393,9 +390,9 @@ class BasestationOptionsFlow(config_entries.OptionsFlow):
                 return self.async_create_entry(title="", data=user_input)
 
         # Get current options or set defaults
-        current_options = self.config_entry.options
-        device_type = self.config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_V2)
-        current_name = current_options.get(CONF_NAME, self.config_entry.data.get(CONF_NAME, ""))
+        current_options = self._config_entry.options
+        device_type = self._config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_V2)
+        current_name = current_options.get(CONF_NAME, self._config_entry.data.get(CONF_NAME, ""))
 
         # Build the schema based on device type
         schema_dict = {
@@ -444,7 +441,7 @@ class BasestationOptionsFlow(config_entries.OptionsFlow):
             data_schema=vol.Schema(schema_dict),
             errors=errors,
             description_placeholders={
-                "device_name": self.config_entry.title,
+                "device_name": self._config_entry.title,
                 "device_type": "Valve Basestation (V2)" if device_type == DEVICE_TYPE_V2 else "Vive Basestation (V1)",
             },
         )
