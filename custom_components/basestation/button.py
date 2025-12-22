@@ -4,17 +4,13 @@ import logging
 
 from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_MAC, CONF_NAME
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import (
-    CONF_DEVICE_TYPE,
-    CONF_PAIR_ID,
-    DOMAIN,
-)
+from .const import DOMAIN
 from .device import BasestationDevice, ValveBasestationDevice, get_basestation_device
+from .utils import get_basic_device_config
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -27,24 +23,23 @@ async def async_setup_entry(
     """Set up the basestation button."""
     _LOGGER.debug("Setting up basestation button entities for entry: %s", entry.title)
 
-    # Get device configuration from the config entry
-    mac = entry.data.get(CONF_MAC)
-    name = entry.data.get(CONF_NAME)
-    device_type = entry.data.get(CONF_DEVICE_TYPE)
-    pair_id = entry.data.get(CONF_PAIR_ID)
-    setup_method = entry.data.get("setup_method", "unknown")
-
-    if not mac:
-        _LOGGER.error("No MAC address found in config entry data: %s", entry.data)
+    # Get device configuration from the config entry using shared utility
+    device_config = get_basic_device_config(entry)
+    if not device_config:
         return
 
-    _LOGGER.debug("Creating device for MAC: %s, Name: %s, Type: %s, Method: %s", mac, name, device_type, setup_method)
-
     # Create the basestation device instance
-    device = get_basestation_device(hass, mac, name=name, device_type=device_type, pair_id=pair_id)
+    device = get_basestation_device(
+        hass,
+        device_config["mac"],
+        name=device_config["name"],
+        device_type=device_config["device_type"],
+        pair_id=device_config["pair_id"],
+        connection_timeout=device_config["connection_timeout"],
+    )
 
     if not device:
-        _LOGGER.error("Failed to create device for MAC: %s", mac)
+        _LOGGER.error("Failed to create device for MAC: %s", device_config["mac"])
         return
 
     # Only add the identify button for Valve basestations (V2 devices)
@@ -52,9 +47,13 @@ async def async_setup_entry(
     if isinstance(device, ValveBasestationDevice):
         entities = [BasestationIdentifyButton(device)]
         async_add_entities(entities, update_before_add=True)
-        _LOGGER.info("Successfully added identify button for %s setup: %s", setup_method, name or mac)
+        _LOGGER.info(
+            "Successfully added identify button for %s setup: %s",
+            device_config["setup_method"],
+            device_config["name"] or device_config["mac"],
+        )
     else:
-        _LOGGER.debug("Skipping identify button for V1 device: %s", mac)
+        _LOGGER.debug("Skipping identify button for V1 device: %s", device_config["mac"])
 
 
 class BasestationIdentifyButton(ButtonEntity):

@@ -12,8 +12,6 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
-    CONF_DEVICE_TYPE,
-    CONF_PAIR_ID,
     DOMAIN,
     STANDBY_STATE_VALUE,
     STANDBY_SWITCH_SCAN_INTERVAL,
@@ -23,6 +21,7 @@ from .device import (
     ValveBasestationDevice,
     get_basestation_device,
 )
+from .utils import get_basic_device_config
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -114,24 +113,23 @@ async def async_setup_entry(
     """Set up the basestation switch from a config entry."""
     _LOGGER.debug("Setting up basestation switch entities for entry: %s", entry.title)
 
-    # Get device configuration from the config entry
-    mac = entry.data.get(CONF_MAC)
-    name = entry.data.get(CONF_NAME)
-    device_type = entry.data.get(CONF_DEVICE_TYPE)
-    pair_id = entry.data.get(CONF_PAIR_ID)
-    setup_method = entry.data.get("setup_method", "unknown")
-
-    if not mac:
-        _LOGGER.error("No MAC address found in config entry data: %s", entry.data)
+    # Get device configuration from the config entry using shared utility
+    device_config = get_basic_device_config(entry)
+    if not device_config:
         return
 
-    _LOGGER.debug("Creating device for MAC: %s, Name: %s, Type: %s, Method: %s", mac, name, device_type, setup_method)
-
     # Create the basestation device instance
-    device = get_basestation_device(hass, mac, name=name, device_type=device_type, pair_id=pair_id)
+    device = get_basestation_device(
+        hass,
+        device_config["mac"],
+        name=device_config["name"],
+        device_type=device_config["device_type"],
+        pair_id=device_config["pair_id"],
+        connection_timeout=device_config["connection_timeout"],
+    )
 
     if not device:
-        _LOGGER.error("Failed to create device for MAC: %s", mac)
+        _LOGGER.error("Failed to create device for MAC: %s", device_config["mac"])
         return
 
     # Create the switch entities for this device
@@ -140,11 +138,16 @@ async def async_setup_entry(
     # Add standby switch for Valve basestations (V2 devices)
     if isinstance(device, ValveBasestationDevice):
         entities.append(BasestationStandbySwitch(device, entry.entry_id))
-        _LOGGER.debug("Added standby switch for Valve basestation: %s", mac)
+        _LOGGER.debug("Added standby switch for Valve basestation: %s", device_config["mac"])
 
     # Add all entities to Home Assistant
     async_add_entities(entities, update_before_add=True)
-    _LOGGER.info("Successfully added %d switch entities for %s setup: %s", len(entities), setup_method, name or mac)
+    _LOGGER.info(
+        "Successfully added %d switch entities for %s setup: %s",
+        len(entities),
+        device_config["setup_method"],
+        device_config["name"] or device_config["mac"],
+    )
 
 
 class BasestationSwitch(SwitchEntity):
