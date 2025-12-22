@@ -3,6 +3,7 @@ name = "basestation"
 version = "2.0.1"
 dependencies = [
     "bleak>=0.19.0",
+    "bleak-retry-connector>=3.5.0",
     "debugpy",
     "homeassistant==2025.2.4",
     "mypy~=1.15.0",

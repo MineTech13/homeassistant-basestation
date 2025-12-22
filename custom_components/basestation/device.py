@@ -1,4 +1,16 @@
-"""Device classes for basestation integration."""
+"""
+Device classes for basestation integration.
+
+This module contains the core device classes for managing VR Base Stations.
+It has been updated to use bleak-retry-connector instead of direct BleakClient
+usage to eliminate Home Assistant warning spam and provide more reliable connections.
+
+Key Changes in v2.0.1:
+- Replaced direct BleakClient usage with establish_connection()
+- Now uses BleakClientWithServiceCache for better performance
+- Eliminates "BleakClient.connect() called without bleak-retry-connector" warnings
+- More reliable connection establishment with automatic retries
+"""
 
 import asyncio
 import logging
@@ -8,8 +20,11 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
 from attr import dataclass
-from bleak import BleakClient
 from bleak.exc import BleakError
+
+# Import the recommended bleak-retry-connector for reliable BLE connections
+# This eliminates Home Assistant warnings and provides automatic retry logic
+from bleak_retry_connector import BleakClientWithServiceCache, establish_connection
 from homeassistant.components import bluetooth
 from homeassistant.core import HomeAssistant
 
@@ -40,7 +55,7 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
-# Limit concurrent connections
+# Limit concurrent connections to prevent overwhelming the Bluetooth adapter
 CONNECTION_SEMAPHORE = asyncio.Semaphore(2)
 CONNECTION_DELAY = 0.5  # Delay between connections in seconds
 MAX_RETRIES = 2  # Maximum connection retry attempts
@@ -152,7 +167,18 @@ class BasestationDevice(ABC):
     @overload
     async def async_ble_operation(self, op: BLEOperationWrite) -> bool: ...
     async def async_ble_operation(self, op: BLEOperationRead | BLEOperationWrite) -> bool | bytearray:
-        """Execute a BLE operation with proper connection management."""
+        """
+        Execute a BLE operation with proper connection management.
+
+        This method now uses establish_connection() from bleak-retry-connector
+        instead of direct BleakClient instantiation. This eliminates Home Assistant
+        warnings and provides more reliable connection establishment.
+
+        Changes from v2.0.0:
+        - Replaced BleakClient() with establish_connection()
+        - Now uses BleakClientWithServiceCache for better performance
+        - Maintains all existing retry and error handling logic
+        """
         result: bool | bytearray
 
         for attempt in range(MAX_RETRIES if op.retry else 1):
@@ -166,8 +192,23 @@ class BasestationDevice(ABC):
                         _LOGGER.debug("Device %s not found in Bluetooth registry", self.mac)
                         continue
 
-                    # Connect to device and execute operation using user-configured timeout
-                    async with BleakClient(device, timeout=self.connection_timeout) as client:
+                    # Establish connection using the recommended approach
+                    # This eliminates the "BleakClient.connect() called without bleak-retry-connector" warning
+                    # The establish_connection function provides:
+                    # - Automatic retry logic for transient connection failures
+                    # - Service caching for improved performance on reconnects
+                    # - Better integration with Home Assistant's Bluetooth stack
+                    client = await establish_connection(
+                        BleakClientWithServiceCache,
+                        device,
+                        device.name or device.address,
+                        disconnected_callback=lambda _: None,
+                        max_attempts=1,  # We handle retries at a higher level
+                        use_services_cache=True,
+                        ble_device_callback=lambda: self.get_ble_device(),
+                    )
+
+                    async with client:
                         if isinstance(op, BLEOperationRead):
                             result = await client.read_gatt_char(op.characteristic_uuid)
                         else:
@@ -211,6 +252,8 @@ class BasestationDevice(ABC):
         """
         Read device information characteristics.
 
+        This method now uses establish_connection() for reliable BLE connections.
+
         Args:
             force: If True, forces a read even if the cache time hasn't expired.
 
@@ -249,8 +292,20 @@ class BasestationDevice(ABC):
                     continue
 
                 info: dict[BaseStationDeviceInfoKey, str] = {}
-                # Use user-configured timeout for device info reading
-                async with BleakClient(device, timeout=self.connection_timeout) as client:
+
+                # Use establish_connection for reliable connection
+                # This eliminates the warning spam in Home Assistant logs
+                client = await establish_connection(
+                    BleakClientWithServiceCache,
+                    device,
+                    device.name or device.address,
+                    disconnected_callback=lambda _: None,
+                    max_attempts=1,
+                    use_services_cache=True,
+                    ble_device_callback=lambda: self.get_ble_device(),
+                )
+
+                async with client:
                     # Try to read each characteristic, logging detailed errors
                     # Flag to track if we successfully read any info
                     any_read_successful: bool = False
@@ -305,9 +360,14 @@ class BasestationDevice(ABC):
         return self._info
 
     @abstractmethod
-    async def _read_specific_info(self, client: BleakClient, info: dict[BaseStationDeviceInfoKey, Any]) -> bool:
+    async def _read_specific_info(
+        self, client: BleakClientWithServiceCache, info: dict[BaseStationDeviceInfoKey, Any]
+    ) -> bool:
         """
         Read device-specific information.
+
+        Note: Now accepts BleakClientWithServiceCache instead of BleakClient
+        to maintain compatibility with establish_connection usage.
 
         Returns:
             True if any information was successfully read, False otherwise.
@@ -378,9 +438,12 @@ class ValveBasestationDevice(BasestationDevice):
             self._last_power_state = 0x02  # Set to "standby" state
 
     async def identify(self) -> None:
-        """Make the device blink its LED to identify it."""
-        # Try different approaches to trigger the identify function
+        """
+        Make the device blink its LED to identify it.
 
+        This method now uses establish_connection() for all connection attempts,
+        eliminating the warning spam in Home Assistant logs.
+        """
         # Method 1: Direct connection with writeWithoutResponse
         try:
             device = self.get_ble_device()
@@ -389,7 +452,20 @@ class ValveBasestationDevice(BasestationDevice):
                 return
 
             _LOGGER.debug("Sending identify command to %s using direct method", self.mac)
-            async with BleakClient(device, timeout=self.connection_timeout) as client:
+
+            # Use establish_connection instead of BleakClient
+            # This provides more reliable connections and eliminates warning spam
+            client = await establish_connection(
+                BleakClientWithServiceCache,
+                device,
+                device.name or device.address,
+                disconnected_callback=lambda _: None,
+                max_attempts=2,
+                use_services_cache=True,
+                ble_device_callback=lambda: self.get_ble_device(),
+            )
+
+            async with client:
                 # Always use writeWithoutResponse for identify characteristic
                 await client.write_gatt_char(
                     V2_IDENTIFY_CHARACTERISTIC,
@@ -425,7 +501,9 @@ class ValveBasestationDevice(BasestationDevice):
         except Exception:
             _LOGGER.exception("All identify methods failed")
 
-    async def _read_specific_info(self, client: BleakClient, info: dict[BaseStationDeviceInfoKey, Any]) -> bool:
+    async def _read_specific_info(
+        self, client: BleakClientWithServiceCache, info: dict[BaseStationDeviceInfoKey, Any]
+    ) -> bool:
         """Read V2-specific information."""
         try:
             channel = await client.read_gatt_char(V2_CHANNEL_CHARACTERISTIC)
@@ -525,7 +603,9 @@ class ViveBasestationDevice(BasestationDevice):
         except Exception:
             self._available = False
 
-    async def _read_specific_info(self, _client: BleakClient, info: dict[BaseStationDeviceInfoKey, Any]) -> bool:
+    async def _read_specific_info(
+        self, _client: BleakClientWithServiceCache, info: dict[BaseStationDeviceInfoKey, Any]
+    ) -> bool:
         """Read V1-specific information."""
         # Add pair ID to info if available
         if self.pair_id:

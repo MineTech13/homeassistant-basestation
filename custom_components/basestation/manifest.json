@@ -24,7 +24,8 @@
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/minetech13/homeassistant-basestation/issues",
   "requirements": [
-    "bleak>=0.19.0"
+    "bleak>=0.19.0",
+    "bleak-retry-connector>=3.5.0"
   ],
   "version": "2.0.1"
 }
