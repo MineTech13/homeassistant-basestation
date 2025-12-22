@@ -17,6 +17,7 @@ from .const import (
     CONF_DEVICE_TYPE,
     DOMAIN,
 )
+from .device import BasestationDevice, get_basestation_device
 from .services import async_setup_services
 
 if TYPE_CHECKING:
@@ -95,6 +96,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Store entry data for this device
     hass.data[DOMAIN][entry.entry_id] = entry.data
 
+    # Create the device instance and store it for cleanup later
+    mac = entry.data.get(CONF_MAC)
+    name = entry.data.get(CONF_NAME)
+    device_type = entry.data.get(CONF_DEVICE_TYPE)
+    pair_id = entry.data.get("pair_id")
+
+    if mac:
+        # Create device instance and store it
+        device = get_basestation_device(
+            hass,
+            mac,
+            name=name,
+            device_type=device_type,
+            pair_id=pair_id,
+        )
+
+        # Store device instance for cleanup
+        hass.data[DOMAIN][f"{entry.entry_id}_device"] = device
+
     # Set up entities for this entry across all platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
@@ -114,10 +134,24 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     _LOGGER.debug("Unloading VR Basestation config entry: %s", entry.title)
 
+    # Get the device instance for cleanup
+    device_key = f"{entry.entry_id}_device"
+    device = hass.data[DOMAIN].get(device_key)
+
+    # Clean up device resources if it exists
+    if device and isinstance(device, BasestationDevice):
+        try:
+            await device.cleanup()
+            _LOGGER.debug("Cleaned up device resources for %s", entry.title)
+        except Exception as e:
+            _LOGGER.warning("Error cleaning up device resources for %s: %s", entry.title, e)
+
     # Unload entities for this config entry across all platforms
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         # Remove stored entry data
         hass.data[DOMAIN].pop(entry.entry_id, None)
+        # Remove device instance
+        hass.data[DOMAIN].pop(device_key, None)
         _LOGGER.info("Successfully unloaded VR Basestation device: %s", entry.title)
     else:
         _LOGGER.error("Failed to unload VR Basestation config entry: %s", entry.title)

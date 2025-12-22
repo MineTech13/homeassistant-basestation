@@ -26,11 +26,9 @@ from .const import (
     DEFAULT_INFO_SCAN_INTERVAL,
     DEFAULT_POWER_STATE_SCAN_INTERVAL,
     DOMAIN,
-    # Legacy constants for compatibility
     INITIAL_RETRY_DELAY,
     MAX_CONSECUTIVE_FAILURES,
     MAX_INITIAL_RETRIES,
-    # Power state descriptions
     V2_STATE_DESCRIPTIONS,
 )
 from .device import (
@@ -270,11 +268,7 @@ class BasestationInfoSensor(SensorEntity):
         """
         current_time = time.time()
 
-        # Determine if we should update:
-        # 1. If forced
-        # 2. If we don't have a value yet
-        # 3. If user-configured scan interval has passed
-        # 4. If we've had failures and are in accelerated retry mode
+        # Determine if we should update
         should_update = (
             self._force_next_update
             or self._attr_native_value == STATE_UNKNOWN
@@ -290,7 +284,7 @@ class BasestationInfoSensor(SensorEntity):
         self._force_next_update = False
 
         try:
-            # Try to read device info with or without forcing based on current sensor state
+            # Try to read device info
             force = self._attr_native_value == STATE_UNKNOWN or self._consecutive_failures > 0
 
             await self._device.read_device_info(force=force)
@@ -314,7 +308,6 @@ class BasestationInfoSensor(SensorEntity):
             self._consecutive_failures += 1
 
             if self._consecutive_failures <= MAX_CONSECUTIVE_FAILURES or self._consecutive_failures % 5 == 0:
-                # Log more frequently for initial failures, then just every 5th failure
                 _LOGGER.warning(
                     "Error updating info sensor %s: %s (failure %d)",
                     self._attr_name,
@@ -325,6 +318,10 @@ class BasestationInfoSensor(SensorEntity):
             # Force next update to use a more aggressive approach if we're having repeated failures
             if self._consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
                 self._force_next_update = True
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Clean up when entity is being removed."""
+        # Info sensors share the device with other entities, so no cleanup needed
 
 
 class BasestationPowerStateSensor(SensorEntity):
@@ -388,3 +385,7 @@ class BasestationPowerStateSensor(SensorEntity):
                         e,
                         self._consecutive_failures,
                     )
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Clean up when entity is being removed."""
+        # Power state sensor shares the device with other entities, so no cleanup needed

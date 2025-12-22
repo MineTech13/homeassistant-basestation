@@ -183,39 +183,23 @@ class BasestationSwitch(SwitchEntity):
         """Turn the switch on."""
         _LOGGER.debug("Turning on basestation: %s", self._device.mac)
         await self._device.turn_on()
+        # Update state immediately
         self.async_write_ha_state()
-
-        # Force update of standby switch if it exists
-        standby_entity_id = f"switch.{self._device.device_name.lower().replace(' ', '_')}_standby_mode"
-        self.hass.async_create_task(
-            self.hass.services.async_call(
-                "homeassistant",
-                "update_entity",
-                {"entity_id": standby_entity_id},
-                blocking=False,
-            ),
-        )
 
     async def async_turn_off(self, **_kwargs: Any) -> None:
         """Turn the switch off."""
         _LOGGER.debug("Turning off basestation: %s", self._device.mac)
         await self._device.turn_off()
+        # Update state immediately
         self.async_write_ha_state()
-
-        # Force update of standby switch if it exists
-        standby_entity_id = f"switch.{self._device.device_name.lower().replace(' ', '_')}_standby_mode"
-        self.hass.async_create_task(
-            self.hass.services.async_call(
-                "homeassistant",
-                "update_entity",
-                {"entity_id": standby_entity_id},
-                blocking=False,
-            ),
-        )
 
     async def async_update(self) -> None:
         """Fetch new state data for the sensor."""
         await self._device.update()
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Clean up when entity is being removed."""
+        await self._device.cleanup()
 
 
 class BasestationStandbySwitch(SwitchEntity):
@@ -254,18 +238,8 @@ class BasestationStandbySwitch(SwitchEntity):
             _LOGGER.debug("Setting standby mode on for: %s", self._device.mac)
             await self._device.set_standby()
             self._is_in_standby = True
+            # Update state immediately
             self.async_write_ha_state()
-
-            # Force refresh of power switch
-            power_entity_id = f"switch.{self._device.device_name.lower().replace(' ', '_')}"
-            self.hass.async_create_task(
-                self.hass.services.async_call(
-                    "homeassistant",
-                    "update_entity",
-                    {"entity_id": power_entity_id},
-                    blocking=False,
-                ),
-            )
 
     async def async_turn_off(self, **_kwargs: Any) -> None:
         """Turn off standby mode (device will go to full on mode)."""
@@ -273,18 +247,8 @@ class BasestationStandbySwitch(SwitchEntity):
             _LOGGER.debug("Setting standby mode off for: %s", self._device.mac)
             await self._device.turn_on()
             self._is_in_standby = False
+            # Update state immediately
             self.async_write_ha_state()
-
-            # Force refresh of power switch
-            power_entity_id = f"switch.{self._device.device_name.lower().replace(' ', '_')}"
-            self.hass.async_create_task(
-                self.hass.services.async_call(
-                    "homeassistant",
-                    "update_entity",
-                    {"entity_id": power_entity_id},
-                    blocking=False,
-                ),
-            )
 
     async def async_update(self) -> None:
         """Update the standby state based on device state."""
@@ -301,8 +265,12 @@ class BasestationStandbySwitch(SwitchEntity):
                 if not self._is_in_standby:
                     self._is_in_standby = True
                     _LOGGER.debug("Standby state changed to ON for %s", self._device.mac)
-            elif raw_state is not None and self._is_in_standby:  # Only update if we have a valid state
+            elif raw_state is not None and self._is_in_standby:
                 self._is_in_standby = False
                 _LOGGER.debug("Standby state changed to OFF for %s", self._device.mac)
 
             self._last_update = current_time
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Clean up when entity is being removed."""
+        # Standby switch shares the device with the main switch, so no cleanup needed

@@ -5,11 +5,12 @@ This module contains the core device classes for managing VR Base Stations.
 It has been updated to use bleak-retry-connector instead of direct BleakClient
 usage to eliminate Home Assistant warning spam and provide more reliable connections.
 
-Key Changes in v2.0.1:
-- Replaced direct BleakClient usage with establish_connection()
-- Now uses BleakClientWithServiceCache for better performance
-- Eliminates "BleakClient.connect() called without bleak-retry-connector" warnings
-- More reliable connection establishment with automatic retries
+Key Changes in v2.0.2:
+- Added proper connection state tracking to prevent multiple simultaneous connections
+- Added cleanup methods for proper resource management
+- Improved error recovery with exponential backoff
+- Added connection cooldown to prevent overwhelming base stations
+- Fixed resource exhaustion issues that caused devices to become unavailable
 """
 
 import asyncio
@@ -23,7 +24,6 @@ from attr import dataclass
 from bleak.exc import BleakError
 
 # Import the recommended bleak-retry-connector for reliable BLE connections
-# This eliminates Home Assistant warnings and provides automatic retry logic
 from bleak_retry_connector import BleakClientWithServiceCache, establish_connection
 from homeassistant.components import bluetooth
 from homeassistant.core import HomeAssistant
@@ -60,6 +60,12 @@ CONNECTION_SEMAPHORE = asyncio.Semaphore(2)
 CONNECTION_DELAY = 0.5  # Delay between connections in seconds
 MAX_RETRIES = 2  # Maximum connection retry attempts
 INFO_READ_RETRIES = 3  # Retries for device info reading
+
+# Connection cooldown to prevent rapid reconnection attempts
+CONNECTION_COOLDOWN = 5.0  # Seconds to wait after failed connection before retry
+MAX_CONSECUTIVE_FAILURES = 5  # Max failures before extended cooldown
+EXTENDED_COOLDOWN = 30.0  # Extended cooldown for persistent failures
+MIN_FAILURES_FOR_UNAVAILABLE = 3  # Mark device unavailable after this many consecutive failures
 
 type BaseStationDeviceInfoKey = Literal["firmware", "model", "hardware", "manufacturer", "channel", "pair_id"]
 
@@ -109,14 +115,24 @@ class BasestationDevice(ABC):
         self.hass = hass
         self.mac = mac
         self.custom_name = name
-        self.connection_timeout = connection_timeout  # User-configurable timeout
+        self.connection_timeout = connection_timeout
         self._is_on = False
         self._available = False
         self._info: dict[BaseStationDeviceInfoKey, str] = {}
         self._retry_count = 0
         self._last_power_state: int | None = None
-        self._last_device_info_read = 0.0  # Timestamp of last device info read
-        self._device_info_read_success = False  # Flag to track if we've ever successfully read device info
+        self._last_device_info_read = 0.0
+        self._device_info_read_success = False
+
+        # Connection state tracking
+        self._is_connecting = False
+        self._last_connection_attempt = 0.0
+        self._consecutive_failures = 0
+        self._last_successful_connection = 0.0
+
+        # Current client reference (for cleanup)
+        self._current_client: BleakClientWithServiceCache | None = None
+        self._client_lock = asyncio.Lock()
 
     @property
     def device_name(self) -> str:
@@ -162,6 +178,58 @@ class BasestationDevice(ABC):
         """Get the BLE device from the address."""
         return bluetooth.async_ble_device_from_address(self.hass, self.mac)
 
+    async def cleanup(self) -> None:
+        """Clean up resources when device is being removed."""
+        async with self._client_lock:
+            if self._current_client and self._current_client.is_connected:
+                try:
+                    await self._current_client.disconnect()
+                    _LOGGER.debug("Disconnected client for %s during cleanup", self.mac)
+                except Exception as e:
+                    _LOGGER.debug("Error disconnecting client during cleanup: %s", e)
+                finally:
+                    self._current_client = None
+
+        self._is_connecting = False
+        self._available = False
+
+    def _should_attempt_connection(self) -> bool:
+        """Determine if we should attempt a connection based on recent failures."""
+        current_time = time.time()
+
+        # If we're already connecting, don't try again
+        if self._is_connecting:
+            return False
+
+        # Calculate required cooldown based on consecutive failures
+        if self._consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+            required_cooldown = EXTENDED_COOLDOWN
+        elif self._consecutive_failures > 0:
+            # Exponential backoff: 5s, 10s, 20s, etc.
+            required_cooldown = CONNECTION_COOLDOWN * (2 ** (self._consecutive_failures - 1))
+        else:
+            required_cooldown = 0
+
+        # Check if enough time has passed since last attempt
+        time_since_last_attempt = current_time - self._last_connection_attempt
+        return time_since_last_attempt >= required_cooldown
+
+    def _record_connection_success(self) -> None:
+        """Record a successful connection."""
+        self._consecutive_failures = 0
+        self._retry_count = 0
+        self._available = True
+        self._last_successful_connection = time.time()
+
+    def _record_connection_failure(self) -> None:
+        """Record a failed connection attempt."""
+        self._consecutive_failures += 1
+        self._retry_count += 1
+
+        # Mark as unavailable after multiple failures
+        if self._consecutive_failures >= MIN_FAILURES_FOR_UNAVAILABLE:
+            self._available = False
+
     @overload
     async def async_ble_operation(self, op: BLEOperationRead) -> bytearray | Literal[False]: ...
     @overload
@@ -170,89 +238,208 @@ class BasestationDevice(ABC):
         """
         Execute a BLE operation with proper connection management.
 
-        This method now uses establish_connection() from bleak-retry-connector
-        instead of direct BleakClient instantiation. This eliminates Home Assistant
-        warnings and provides more reliable connection establishment.
-
-        Changes from v2.0.0:
-        - Replaced BleakClient() with establish_connection()
-        - Now uses BleakClientWithServiceCache for better performance
-        - Maintains all existing retry and error handling logic
+        This method includes:
+        - Connection state tracking to prevent multiple simultaneous connections
+        - Exponential backoff for failed connections
+        - Proper cleanup of connections
+        - Connection cooldown to prevent overwhelming devices
         """
+        # Check if we should attempt connection
+        if not self._should_attempt_connection():
+            _LOGGER.debug(
+                "Skipping connection attempt for %s (consecutive failures: %d, cooldown active)",
+                self.mac,
+                self._consecutive_failures,
+            )
+            return False
+
         result: bool | bytearray
+        self._last_connection_attempt = time.time()
 
-        for attempt in range(MAX_RETRIES if op.retry else 1):
-            try:
-                async with CONNECTION_SEMAPHORE:
-                    await connect_delay(attempt)
+        # Mark that we're connecting
+        async with self._client_lock:
+            if self._is_connecting:
+                _LOGGER.debug("Already connecting to %s, skipping", self.mac)
+                return False
+            self._is_connecting = True
 
-                    # Get BLE device from registry
-                    device = self.get_ble_device()
-                    if not device:
-                        _LOGGER.debug("Device %s not found in Bluetooth registry", self.mac)
-                        continue
+        try:
+            for attempt in range(MAX_RETRIES if op.retry else 1):
+                try:
+                    async with CONNECTION_SEMAPHORE:
+                        await connect_delay(attempt)
 
-                    # Establish connection using the recommended approach
-                    # This eliminates the "BleakClient.connect() called without bleak-retry-connector" warning
-                    # The establish_connection function provides:
-                    # - Automatic retry logic for transient connection failures
-                    # - Service caching for improved performance on reconnects
-                    # - Better integration with Home Assistant's Bluetooth stack
-                    client = await establish_connection(
-                        BleakClientWithServiceCache,
-                        device,
-                        device.name or device.address,
-                        disconnected_callback=lambda _: None,
-                        max_attempts=1,  # We handle retries at a higher level
-                        use_services_cache=True,
-                        ble_device_callback=lambda: self.get_ble_device(),
+                        # Get BLE device from registry
+                        device = self.get_ble_device()
+                        if not device:
+                            _LOGGER.debug("Device %s not found in Bluetooth registry", self.mac)
+                            continue
+
+                        # Establish connection using the recommended approach
+                        client = await establish_connection(
+                            BleakClientWithServiceCache,
+                            device,
+                            device.name or device.address,
+                            disconnected_callback=self._handle_disconnect,
+                            max_attempts=1,
+                            use_services_cache=True,
+                            ble_device_callback=lambda: self.get_ble_device(),
+                        )
+
+                        async with client:
+                            # Store client reference for cleanup
+                            async with self._client_lock:
+                                self._current_client = client
+
+                            if isinstance(op, BLEOperationRead):
+                                result = await client.read_gatt_char(op.characteristic_uuid)
+                            else:
+                                await client.write_gatt_char(
+                                    op.characteristic_uuid,
+                                    op.value,
+                                    response=not op.without_response,
+                                )
+                                result = True
+
+                            # Record success
+                            self._record_connection_success()
+                            return result
+
+                except BleakError as err:
+                    _LOGGER.debug(
+                        "BLE error on basestation '%s' (attempt %d/%d): %s",
+                        self.mac,
+                        attempt + 1,
+                        MAX_RETRIES if op.retry else 1,
+                        str(err),
                     )
 
-                    async with client:
-                        if isinstance(op, BLEOperationRead):
-                            result = await client.read_gatt_char(op.characteristic_uuid)
-                        else:
-                            await client.write_gatt_char(
-                                op.characteristic_uuid,
-                                op.value,
-                                response=not op.without_response,
-                            )
-                            result = True
+                except Exception as ex:
+                    _LOGGER.debug(
+                        "Failed to execute %s on basestation '%s': %s",
+                        op,
+                        self.mac,
+                        str(ex),
+                    )
 
-                        # Reset retry count on success
-                        self._retry_count = 0
-                        self._available = True
-                        return result
+                # Small delay between retries
+                if attempt < (MAX_RETRIES if op.retry else 1) - 1:
+                    await asyncio.sleep(CONNECTION_DELAY)
 
-            except BleakError as err:
-                _LOGGER.debug(
-                    "BLE error on basestation '%s' (attempt %d/%d): %s",
+            # All attempts failed
+            self._record_connection_failure()
+
+            # Log warning for persistent failures
+            if self._consecutive_failures == MAX_CONSECUTIVE_FAILURES:
+                _LOGGER.warning(
+                    "Device %s has failed %d consecutive connection attempts. "
+                    "Entering extended cooldown mode. Check if device is powered on and in range.",
                     self.mac,
-                    attempt + 1,
-                    MAX_RETRIES if op.retry else 1,
-                    str(err),
+                    self._consecutive_failures,
                 )
 
-            except Exception as ex:
-                _LOGGER.debug(
-                    "Failed to execute %s on basestation '%s': %s",
-                    op,
-                    self.mac,
-                    str(ex),
-                )
+            return False
 
-            # Increment retry count
-            self._retry_count += 1
+        finally:
+            # Always clear connecting flag and client reference
+            async with self._client_lock:
+                self._is_connecting = False
+                self._current_client = None
 
-        # If we get here, all attempts failed
-        self._available = False
-        return False
+    def _handle_disconnect(self, _client: BleakClientWithServiceCache) -> None:
+        """Handle disconnection callback from BLE client."""
+        _LOGGER.debug("Device %s disconnected", self.mac)
+        # Don't mark as unavailable on disconnect - it might just be between operations
 
-    async def read_device_info(self, /, *, force: bool = False) -> dict[BaseStationDeviceInfoKey, str]:  # noqa: C901
+    async def _read_standard_characteristics(
+        self, client: BleakClientWithServiceCache, info: dict[BaseStationDeviceInfoKey, str]
+    ) -> bool:
+        """
+        Read standard device info characteristics.
+
+        Returns:
+            True if any characteristic was successfully read, False otherwise.
+
+        """
+        any_read_successful = False
+
+        for characteristic, key in cast(
+            "Iterable[tuple[str, BaseStationDeviceInfoKey]]",
+            (
+                (FIRMWARE_CHARACTERISTIC, "firmware"),
+                (MODEL_CHARACTERISTIC, "model"),
+                (HARDWARE_CHARACTERISTIC, "hardware"),
+                (MANUFACTURER_CHARACTERISTIC, "manufacturer"),
+            ),
+        ):
+            try:
+                if _value := await client.read_gatt_char(characteristic):
+                    info[key] = _value.decode("utf-8").strip()
+                    _LOGGER.debug("Read %s for %s: %s", key, self.mac, _value)
+                    any_read_successful = True
+            except Exception as e:
+                _LOGGER.debug("Failed to read %s for %s: %s", key, self.mac, e)
+
+        return any_read_successful
+
+    async def _attempt_device_info_read(self) -> dict[BaseStationDeviceInfoKey, str] | None:
+        """
+        Attempt a single device info read operation.
+
+        Returns:
+            Dictionary of device info if successful, None otherwise.
+
+        """
+        device = self.get_ble_device()
+        if not device:
+            _LOGGER.debug(
+                "Device %s not found in Bluetooth registry for info read",
+                self.mac,
+            )
+            return None
+
+        info: dict[BaseStationDeviceInfoKey, str] = {}
+
+        try:
+            # Use establish_connection for reliable connection
+            client = await establish_connection(
+                BleakClientWithServiceCache,
+                device,
+                device.name or device.address,
+                disconnected_callback=self._handle_disconnect,
+                max_attempts=1,
+                use_services_cache=True,
+                ble_device_callback=lambda: self.get_ble_device(),
+            )
+
+            async with client:
+                # Store client reference
+                async with self._client_lock:
+                    self._current_client = client
+
+                # Read standard characteristics
+                standard_read_successful = await self._read_standard_characteristics(client, info)
+
+                # Add device-specific info reading
+                specific_info_success = await self._read_specific_info(client, info)
+
+                # Return info if any read was successful
+                if standard_read_successful or specific_info_success:
+                    return info
+
+        except Exception as e:
+            _LOGGER.debug("Failed to connect for device info read for %s: %s", self.mac, e)
+
+        finally:
+            async with self._client_lock:
+                self._is_connecting = False
+                self._current_client = None
+
+        return None
+
+    async def read_device_info(self, /, *, force: bool = False) -> dict[BaseStationDeviceInfoKey, str]:
         """
         Read device information characteristics.
-
-        This method now uses establish_connection() for reliable BLE connections.
 
         Args:
             force: If True, forces a read even if the cache time hasn't expired.
@@ -271,6 +458,11 @@ class BasestationDevice(ABC):
             _LOGGER.debug("Using cached device info for %s", self.mac)
             return self._info
 
+        # Check if we should attempt connection
+        if not self._should_attempt_connection():
+            _LOGGER.debug("Skipping device info read for %s due to cooldown", self.mac)
+            return self._info
+
         # Try to read with multiple retries for reliability
         for attempt in range(INFO_READ_RETRIES):
             if attempt > 0:
@@ -282,74 +474,36 @@ class BasestationDevice(ABC):
                 )
                 await asyncio.sleep(CONNECTION_DELAY * (2**attempt))
 
-            try:
-                device = self.get_ble_device()
-                if not device:
-                    _LOGGER.debug(
-                        "Device %s not found in Bluetooth registry for info read",
-                        self.mac,
-                    )
-                    continue
+            self._last_connection_attempt = time.time()
 
-                info: dict[BaseStationDeviceInfoKey, str] = {}
+            # Mark that we're connecting
+            async with self._client_lock:
+                if self._is_connecting:
+                    _LOGGER.debug("Already connecting to %s for info read, skipping", self.mac)
+                    return self._info
+                self._is_connecting = True
 
-                # Use establish_connection for reliable connection
-                # This eliminates the warning spam in Home Assistant logs
-                client = await establish_connection(
-                    BleakClientWithServiceCache,
-                    device,
-                    device.name or device.address,
-                    disconnected_callback=lambda _: None,
-                    max_attempts=1,
-                    use_services_cache=True,
-                    ble_device_callback=lambda: self.get_ble_device(),
+            # Attempt to read device info
+            info = await self._attempt_device_info_read()
+
+            if info:
+                # Success! Update stored info and return
+                self._info |= info
+                self._record_connection_success()
+                self._last_device_info_read = current_time
+                self._device_info_read_success = True
+
+                _LOGGER.info(
+                    "Successfully read device info for %s, fields: %s",
+                    self.mac,
+                    ", ".join(info.keys()),
                 )
+                return info
 
-                async with client:
-                    # Try to read each characteristic, logging detailed errors
-                    # Flag to track if we successfully read any info
-                    any_read_successful: bool = False
+            # Failed this attempt, record it
+            self._record_connection_failure()
 
-                    for characteristic, key in cast(
-                        "Iterable[tuple[str, BaseStationDeviceInfoKey]]",
-                        (
-                            (FIRMWARE_CHARACTERISTIC, "firmware"),
-                            (MODEL_CHARACTERISTIC, "model"),
-                            (HARDWARE_CHARACTERISTIC, "hardware"),
-                            (MANUFACTURER_CHARACTERISTIC, "manufacturer"),
-                        ),
-                    ):
-                        try:
-                            if _value := await client.read_gatt_char(characteristic):
-                                info[key] = _value.decode("utf-8").strip()
-                                _LOGGER.debug("Read %s for %s: %s", key, self.mac, _value)
-                                any_read_successful = True
-                        except Exception as e:
-                            _LOGGER.debug("Failed to read %s for %s: %s", key, self.mac, e)
-
-                    # Add device-specific info reading
-                    specific_info_success = await self._read_specific_info(client, info)
-
-                    # Only update stored info and timestamp if we had a successful read
-                    if any_read_successful or specific_info_success:
-                        # Preserve existing info if new read doesn't provide it
-                        self._info |= info
-
-                        self._available = True
-                        self._last_device_info_read = current_time
-                        self._device_info_read_success = True
-
-                        _LOGGER.info(
-                            "Successfully read device info for %s, fields: %s",
-                            self.mac,
-                            ", ".join(info.keys()),
-                        )
-
-                        return info
-            except Exception as e:
-                _LOGGER.debug("Failed to connect for device info read for %s: %s", self.mac, e)
-
-        # If all attempts failed, log a warning
+        # All attempts failed
         if not self._device_info_read_success:
             _LOGGER.warning(
                 "Failed to read any device info for %s after %d attempts",
@@ -365,9 +519,6 @@ class BasestationDevice(ABC):
     ) -> bool:
         """
         Read device-specific information.
-
-        Note: Now accepts BleakClientWithServiceCache instead of BleakClient
-        to maintain compatibility with establish_connection usage.
 
         Returns:
             True if any information was successfully read, False otherwise.
@@ -398,33 +549,31 @@ class ValveBasestationDevice(BasestationDevice):
         result = await self.async_ble_operation(BLEOperationWrite(V2_PWR_CHARACTERISTIC, V2_PWR_ON))
         if result:
             self._is_on = True
-            self._last_power_state = 0x0B  # Set to "on" state
+            self._last_power_state = 0x0B
 
     async def turn_off(self) -> None:
         """Turn off the device."""
         result = await self.async_ble_operation(BLEOperationWrite(V2_PWR_CHARACTERISTIC, V2_PWR_SLEEP))
         if result:
             self._is_on = False
-            self._last_power_state = 0x00  # Set to "sleep" state
+            self._last_power_state = 0x00
 
     async def update(self) -> None:
         """Update the device state."""
         value = await self.async_ble_operation(BLEOperationRead(V2_PWR_CHARACTERISTIC))
-        if value and len(value) > 0:  # Check if operation was successful
+        if value and len(value) > 0:
             self._last_power_state = value[0]
-            # Changed to consider the device "on" if not in sleep mode (0x00)
-            # This means both normal operation (0x0b) and standby (0x02) will show as "on"
             self._is_on = value[0] != 0x00
 
     async def get_raw_power_state(self) -> int | None:
         """Get the raw power state value."""
-        # If we have a cached value, return it
+        # If we have a recent cached value, return it
         if self._last_power_state is not None:
             return self._last_power_state
 
         # Otherwise try to read it
         value = await self.async_ble_operation(BLEOperationRead(V2_PWR_CHARACTERISTIC))
-        if value is not False and len(value) > 0:  # Check if operation was successful
+        if value is not False and len(value) > 0:
             self._last_power_state = value[0]
             return value[0]
         return None
@@ -433,73 +582,19 @@ class ValveBasestationDevice(BasestationDevice):
         """Set the device to standby mode."""
         result = await self.async_ble_operation(BLEOperationWrite(V2_PWR_CHARACTERISTIC, V2_PWR_STANDBY))
         if result:
-            # Changed from False to True - standby mode should show the main switch as "on"
             self._is_on = True
-            self._last_power_state = 0x02  # Set to "standby" state
+            self._last_power_state = 0x02
 
     async def identify(self) -> None:
-        """
-        Make the device blink its LED to identify it.
-
-        This method now uses establish_connection() for all connection attempts,
-        eliminating the warning spam in Home Assistant logs.
-        """
-        # Method 1: Direct connection with writeWithoutResponse
+        """Make the device blink its LED to identify it."""
         try:
-            device = self.get_ble_device()
-            if not device:
-                _LOGGER.warning("Device %s not found in Bluetooth registry", self.mac)
-                return
-
-            _LOGGER.debug("Sending identify command to %s using direct method", self.mac)
-
-            # Use establish_connection instead of BleakClient
-            # This provides more reliable connections and eliminates warning spam
-            client = await establish_connection(
-                BleakClientWithServiceCache,
-                device,
-                device.name or device.address,
-                disconnected_callback=lambda _: None,
-                max_attempts=2,
-                use_services_cache=True,
-                ble_device_callback=lambda: self.get_ble_device(),
-            )
-
-            async with client:
-                # Always use writeWithoutResponse for identify characteristic
-                await client.write_gatt_char(
-                    V2_IDENTIFY_CHARACTERISTIC,
-                    b"\x00",
-                    response=False,  # writeWithoutResponse
-                )
-                _LOGGER.info("Identify command sent to %s", self.mac)
-                self._available = True
-                return
-
-        except Exception as e:
-            _LOGGER.warning("Failed direct identify method: %s", str(e))
-
-        # Method 2: Use our standard BLE operation with without_response=True
-        try:
-            _LOGGER.debug("Trying identify with standard BLE operation")
             result = await self.async_ble_operation(
                 BLEOperationWrite(V2_IDENTIFY_CHARACTERISTIC, b"\x00", without_response=True),
             )
             if result:
-                _LOGGER.info("Identify command sent successfully with standard method")
-                return
-        except Exception as e:
-            _LOGGER.warning("Failed standard identify method: %s", str(e))
-
-        # Method 3: Last resort - try both 0x00 and 0x01 values
-        try:
-            _LOGGER.debug("Trying alternate identify value")
-            await self.async_ble_operation(
-                BLEOperationWrite(V2_IDENTIFY_CHARACTERISTIC, b"\x01", without_response=True),
-            )
-            _LOGGER.info("Alternate identify command sent")
+                _LOGGER.info("Identify command sent successfully to %s", self.mac)
         except Exception:
-            _LOGGER.exception("All identify methods failed")
+            _LOGGER.exception("Failed to send identify command to %s", self.mac)
 
     async def _read_specific_info(
         self, client: BleakClientWithServiceCache, info: dict[BaseStationDeviceInfoKey, Any]
@@ -531,7 +626,6 @@ class ViveBasestationDevice(BasestationDevice):
         """Initialize the Vive basestation device."""
         super().__init__(hass, mac, name, connection_timeout)
         self.pair_id = pair_id
-        # Store pair_id in the info dictionary
         if pair_id is not None:
             self._info["pair_id"] = f"0x{pair_id:08X}"
 
@@ -547,13 +641,11 @@ class ViveBasestationDevice(BasestationDevice):
             return
 
         try:
-            # Create the command
             command = bytearray(20)
-            command[0] = 0x12  # Command code
-            command[1] = 0x00  # On state
+            command[0] = 0x12
+            command[1] = 0x00
             command[2] = 0x00
             command[3] = 0x00
-            # Add pair ID in little endian
             command[4:8] = struct.pack("<I", self.pair_id)
 
             result = await self.async_ble_operation(
@@ -563,7 +655,6 @@ class ViveBasestationDevice(BasestationDevice):
                 self._is_on = True
         except Exception:
             _LOGGER.exception("Failed to turn on V1 basestation")
-            self._available = False
 
     async def turn_off(self) -> None:
         """Turn off the device."""
@@ -572,13 +663,11 @@ class ViveBasestationDevice(BasestationDevice):
             return
 
         try:
-            # Create the command
             command = bytearray(20)
-            command[0] = 0x12  # Command code
-            command[1] = 0x02  # Sleep state
+            command[0] = 0x12
+            command[1] = 0x02
             command[2] = 0x00
             command[3] = 0x01
-            # Add pair ID in little endian
             command[4:8] = struct.pack("<I", self.pair_id)
 
             result = await self.async_ble_operation(
@@ -588,18 +677,14 @@ class ViveBasestationDevice(BasestationDevice):
                 self._is_on = False
         except Exception:
             _LOGGER.exception("Failed to turn off V1 basestation")
-            self._available = False
 
     async def update(self) -> None:
         """Update the device state."""
         # V1 devices don't support reading the current state
-        # We'll check if the device is still available
+        # Just check if device is discoverable
         try:
             ble_device = self.get_ble_device()
-            if ble_device:
-                self._available = True
-            else:
-                self._available = False
+            self._available = ble_device is not None
         except Exception:
             self._available = False
 
@@ -607,7 +692,6 @@ class ViveBasestationDevice(BasestationDevice):
         self, _client: BleakClientWithServiceCache, info: dict[BaseStationDeviceInfoKey, Any]
     ) -> bool:
         """Read V1-specific information."""
-        # Add pair ID to info if available
         if self.pair_id:
             info["pair_id"] = f"0x{self.pair_id:08X}"
             return True
@@ -629,10 +713,8 @@ def get_basestation_device(
     if device_type == DEVICE_TYPE_V2 or (name and name.startswith(V2_NAME_PREFIX)):
         return ValveBasestationDevice(hass, mac, name, connection_timeout=connection_timeout)
     if device_type == DEVICE_TYPE_V1 or (name and name.startswith(V1_NAME_PREFIX)):
-        # For V1 devices, we need the pair ID
         return ViveBasestationDevice(hass, mac, name, pair_id, connection_timeout=connection_timeout)
 
-    # If we can't determine the type, default to Valve basestation
     _LOGGER.warning("Could not determine device type for %s, defaulting to Valve basestation", mac)
     return ValveBasestationDevice(hass, mac, name, connection_timeout=connection_timeout)
 
@@ -654,5 +736,4 @@ async def connect_delay(attempt: int) -> None:
     if attempt > 0:
         await asyncio.sleep(CONNECTION_DELAY * (2**attempt))
 
-    # Faster initial attempt
     await asyncio.sleep(CONNECTION_DELAY * 0.5)

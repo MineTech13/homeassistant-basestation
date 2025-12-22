@@ -100,3 +100,7 @@ class BasestationIdentifyButton(ButtonEntity):
         # This method ensures the button state is updated when Home Assistant polls entities
         # It primarily updates the availability status based on device connectivity
         await self._device.update()
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Clean up when entity is being removed."""
+        # Button shares the device with other entities, so no cleanup needed
