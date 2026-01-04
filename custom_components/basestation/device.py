@@ -16,11 +16,11 @@ from homeassistant.core import HomeAssistant
 
 from .const import (
     DEFAULT_CONNECTION_TIMEOUT,
+    DEFAULT_INFO_SCAN_INTERVAL,
     DEVICE_TYPE_V1,
     DEVICE_TYPE_V2,
     FIRMWARE_CHARACTERISTIC,
     HARDWARE_CHARACTERISTIC,
-    INFO_SENSOR_SCAN_INTERVAL,
     MANUFACTURER_CHARACTERISTIC,
     MODEL_CHARACTERISTIC,
     STANDBY_STATE_VALUE,
@@ -348,7 +348,7 @@ class BasestationDevice(ABC):
         if (
             not force
             and self._device_info_read_success
-            and (current_time - self._last_device_info_read < INFO_SENSOR_SCAN_INTERVAL)
+            and (current_time - self._last_device_info_read < DEFAULT_INFO_SCAN_INTERVAL)
         ):
             return self._info
 

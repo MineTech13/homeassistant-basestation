@@ -36,14 +36,8 @@ CONF_POWER_STATE_SCAN_INTERVAL = "power_state_scan_interval"
 CONF_CONNECTION_TIMEOUT = "connection_timeout"
 CONF_ENABLE_INFO_SENSORS = "enable_info_sensors"
 
-# Deprecated options (kept for migration compatibility only)
-# These are no longer used but kept to prevent errors when upgrading
-CONF_STANDBY_SCAN_INTERVAL = "standby_scan_interval"  # DEPRECATED in v2.0.3 - standby switch reads from cache
-CONF_ENABLE_POWER_STATE_SENSOR = "enable_power_state_sensor"  # DEPRECATED in v2.0.3 - always enabled (critical)
-
 # Setup methods - simplified for device-based architecture
 SETUP_MANUAL = "manual"
-SETUP_IMPORT = "import"  # For migration from YAML config
 
 # Name prefixes for bluetooth device recognition
 V1_NAME_PREFIX = "HTC BS"
@@ -66,11 +60,6 @@ DEFAULT_CONNECTION_TIMEOUT = 10  # 10 seconds - BLE connection timeout
 
 # Default sensor enablement
 DEFAULT_ENABLE_INFO_SENSORS = True  # Enable device info sensors by default
-
-# Legacy constants for backward compatibility
-INFO_SENSOR_SCAN_INTERVAL = DEFAULT_INFO_SCAN_INTERVAL
-POWER_STATE_SCAN_INTERVAL = DEFAULT_POWER_STATE_SCAN_INTERVAL
-# STANDBY_SWITCH_SCAN_INTERVAL removed - no longer used in v2.0.3
 
 # Initial device info setup retries
 INITIAL_RETRY_DELAY = 2  # seconds
