@@ -25,7 +25,6 @@ from .const import (
     DEVICE_TYPE_V1,
     DEVICE_TYPE_V2,
     DOMAIN,
-    SETUP_IMPORT,
     SETUP_MANUAL,
     V1_NAME_PREFIX,
     V2_NAME_PREFIX,
@@ -152,48 +151,6 @@ class BasestationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_NAME: user_provided_name,
                 CONF_DEVICE_TYPE: device_type,
                 CONF_SETUP_METHOD: "bluetooth_discovery",
-            },
-        )
-
-    async def async_step_import(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        """Import a config entry from configuration.yaml."""
-        if not user_input:
-            return self.async_abort(reason="invalid_data")
-
-        mac = user_input.get(CONF_MAC)
-        name = user_input.get(CONF_NAME)
-
-        if not mac:
-            return self.async_abort(reason="invalid_mac")
-
-        # Format MAC address consistently
-        mac = mac.upper()
-        mac = mac.replace("-", ":").replace(" ", "")
-
-        # If MAC is in format without colons, add them
-        if ":" not in mac and len(mac) == 12:  # noqa: PLR2004
-            mac = ":".join(mac[i : i + 2] for i in range(0, 12, 2))
-
-        # Use MAC address as the unique ID
-        await self.async_set_unique_id(mac)
-        self._abort_if_unique_id_configured()
-
-        # Create the title and name for the entry
-        if name:
-            title = name
-        else:
-            short_id = mac[-5:]
-            title = f"Basestation {short_id}"
-            name = title
-
-        _LOGGER.info("Importing basestation configuration from YAML: %s (%s)", name, mac)
-
-        return self.async_create_entry(
-            title=title,
-            data={
-                CONF_MAC: mac,
-                CONF_NAME: name,
-                CONF_SETUP_METHOD: SETUP_IMPORT,  # Mark as imported
             },
         )
 

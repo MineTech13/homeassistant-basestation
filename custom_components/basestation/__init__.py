@@ -5,10 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-import voluptuous as vol
-from homeassistant.config_entries import SOURCE_IMPORT
 from homeassistant.const import CONF_MAC, CONF_NAME, Platform
-from homeassistant.helpers import config_validation as cv
 
 from .const import (
     CONF_DEVICE_TYPE,
@@ -27,74 +24,6 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = [Platform.SWITCH, Platform.BUTTON, Platform.SENSOR]
-
-BASESTATION_SCHEMA = vol.Schema(
-    {
-        vol.Required(CONF_MAC): cv.string,
-        vol.Optional(CONF_NAME): cv.string,
-        vol.Optional(CONF_DEVICE_TYPE): cv.string,
-    },
-)
-
-CONFIG_SCHEMA = vol.Schema(
-    {
-        DOMAIN: cv.schema_with_slug_keys(BASESTATION_SCHEMA),
-    },
-    extra=vol.ALLOW_EXTRA,
-)
-
-# Constants for MAC formatting
-MAC_LENGTH_NO_SEPARATORS = 12
-MAC_SEPARATOR_INTERVAL = 2
-
-
-async def async_setup(hass: HomeAssistant, config: dict) -> bool:
-    """Set up the VR Basestation component."""
-    hass.data.setdefault(DOMAIN, {})
-
-    if DOMAIN in config:
-        yaml_devices = config[DOMAIN]
-        _LOGGER.info(
-            "Found %s basestation(s) configured in YAML. Starting migration.",
-            len(yaml_devices),
-        )
-
-        migrated_count = 0
-        for device_key, device_config in yaml_devices.items():
-            mac = device_config.get(CONF_MAC)
-            name = device_config.get(CONF_NAME, device_key)
-
-            if not mac:
-                continue
-
-            # Format MAC address
-            formatted_mac = mac.replace(":", "").replace("-", "").replace(" ", "").upper()
-            if len(formatted_mac) == MAC_LENGTH_NO_SEPARATORS:
-                formatted_mac = ":".join(
-                    formatted_mac[i : i + MAC_SEPARATOR_INTERVAL]
-                    for i in range(0, MAC_LENGTH_NO_SEPARATORS, MAC_SEPARATOR_INTERVAL)
-                )
-
-            # Trigger import flow
-            hass.async_create_task(
-                hass.config_entries.flow.async_init(
-                    DOMAIN, context={"source": SOURCE_IMPORT}, data={CONF_MAC: formatted_mac, CONF_NAME: name}
-                )
-            )
-            migrated_count += 1
-
-        if migrated_count > 0:
-            notification_data = {
-                "message": (
-                    f"Migrating {migrated_count} VR Basestation(s) from YAML to UI.\n\n"
-                    f"You can remove the basestation entries from your configuration.yaml once complete."
-                ),
-                "title": "VR Basestation: YAML Migration",
-                "notification_id": "basestation_yaml_migration_notice",
-            }
-            hass.services.call("persistent_notification", "create", notification_data)
-
-    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
