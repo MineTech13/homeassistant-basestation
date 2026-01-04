@@ -1,4 +1,10 @@
-"""Button component for basestation integration."""
+"""
+Button component for basestation integration.
+
+This module has been optimized to reduce BLE polling. The identify button
+now determines its availability based on whether we have recent power state
+data from the Power State sensor.
+"""
 
 import logging
 
@@ -57,7 +63,12 @@ async def async_setup_entry(
 
 
 class BasestationIdentifyButton(ButtonEntity):
-    """Button to identify the basestation by blinking its LED."""
+    """
+    Button to identify the basestation by blinking its LED.
+
+    Availability is determined by whether we have recent power state data,
+    which indicates the device is connected and reachable.
+    """
 
     def __init__(self, device: BasestationDevice) -> None:
         """Initialize the identify button."""
@@ -76,7 +87,17 @@ class BasestationIdentifyButton(ButtonEntity):
 
     @property
     def available(self) -> bool:
-        """Return if the device is available."""
+        """
+        Return if the button is available.
+
+        The button is available when we have fresh power state data,
+        indicating the device is connected and reachable.
+        """
+        # For V2 devices, check if we have fresh state from the Power State sensor
+        if isinstance(self._device, ValveBasestationDevice):
+            return self._device.has_fresh_state
+
+        # For V1 devices (shouldn't happen as we only create this for V2), use device availability
         return self._device.available
 
     async def async_press(self) -> None:
@@ -95,10 +116,13 @@ class BasestationIdentifyButton(ButtonEntity):
                 self._pressed = False
 
     async def async_update(self) -> None:
-        """Update the button state including availability."""
-        # This method ensures the button state is updated when Home Assistant polls entities
-        # It primarily updates the availability status based on device connectivity
-        await self._device.update()
+        """
+        Update the button state including availability.
+
+        No polling is needed - availability is derived from the device's
+        cached power state which is maintained by the Power State sensor.
+        """
+        # No polling needed - availability is automatically updated via property
 
     async def async_will_remove_from_hass(self) -> None:
         """Clean up when entity is being removed."""

@@ -1,7 +1,17 @@
-"""The basestation switch component."""
+"""
+The basestation switch component.
+
+This module has been optimized to reduce BLE polling. The switches now read
+from the cached power state that is maintained by the Power State sensor,
+eliminating redundant BLE requests.
+
+State Mapping:
+- Sleep (0x00) -> LHB OFF, Standby Mode OFF
+- Standby (0x02) -> LHB ON, Standby Mode ON
+- Booting/Starting/On (0x01, 0x08, 0x09, 0x0B) -> LHB ON, Standby Mode OFF
+"""
 
 import logging
-import time
 from typing import Any
 
 from homeassistant.components.switch import SwitchEntity
@@ -13,8 +23,6 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
     DOMAIN,
-    STANDBY_STATE_VALUE,
-    STANDBY_SWITCH_SCAN_INTERVAL,
 )
 from .device import (
     BasestationDevice,
@@ -151,7 +159,16 @@ async def async_setup_entry(
 
 
 class BasestationSwitch(SwitchEntity):
-    """Representation of a basestation main power switch."""
+    """
+    Representation of a basestation main power switch.
+
+    This switch reads state from the cached power state maintained by the
+    Power State sensor, eliminating redundant BLE polling.
+
+    State Logic:
+    - OFF when power state is 0x00 (Sleep)
+    - ON for all other states (0x01, 0x02, 0x08, 0x09, 0x0B)
+    """
 
     def __init__(self, device: BasestationDevice, entry_id: str) -> None:
         """Initialize the switch."""
@@ -160,7 +177,6 @@ class BasestationSwitch(SwitchEntity):
         self._attr_unique_id = f"basestation_{device.mac}"
         self._attr_name = device.device_name
         self._attr_icon = "mdi:virtual-reality"
-        self._last_update = 0
 
         # Create device info for Home Assistant device registry
         self._attr_device_info = DeviceInfo(
@@ -174,7 +190,22 @@ class BasestationSwitch(SwitchEntity):
 
     @property
     def is_on(self) -> bool:
-        """Return if the switch is currently on or off."""
+        """
+        Return if the switch is currently on or off.
+
+        Reads from the cached power state:
+        - Sleep (0x00) -> OFF
+        - Any other state -> ON
+        """
+        # For V2 devices, read from cached power state
+        if isinstance(self._device, ValveBasestationDevice):
+            if self._device.last_power_state is None:
+                # No state available yet, assume off
+                return False
+            # Device is ON if not in sleep mode (0x00)
+            return self._device.last_power_state != 0x00
+
+        # For V1 devices, use the device's is_on property
         return self._device.is_on
 
     @property
@@ -186,19 +217,27 @@ class BasestationSwitch(SwitchEntity):
         """Turn the switch on."""
         _LOGGER.debug("Turning on basestation: %s", self._device.mac)
         await self._device.turn_on()
-        # Update state immediately
+        # State will be updated by the Power State sensor or device update
         self.async_write_ha_state()
 
     async def async_turn_off(self, **_kwargs: Any) -> None:
         """Turn the switch off."""
         _LOGGER.debug("Turning off basestation: %s", self._device.mac)
         await self._device.turn_off()
-        # Update state immediately
+        # State will be updated by the Power State sensor or device update
         self.async_write_ha_state()
 
     async def async_update(self) -> None:
-        """Fetch new state data for the sensor."""
-        await self._device.update()
+        """
+        Update entity state.
+
+        For V2 devices with Power State sensor enabled, this just reads
+        the cached state. For V1 devices or when sensor is disabled,
+        this polls the device directly.
+        """
+        # Only poll if we don't have fresh state (V1 devices or fallback)
+        if not isinstance(self._device, ValveBasestationDevice) or not self._device.has_fresh_state:
+            await self._device.update()
 
     async def async_will_remove_from_hass(self) -> None:
         """Clean up when entity is being removed."""
@@ -206,7 +245,16 @@ class BasestationSwitch(SwitchEntity):
 
 
 class BasestationStandbySwitch(SwitchEntity):
-    """Representation of a basestation standby switch (V2 only)."""
+    """
+    Representation of a basestation standby switch (V2 only).
+
+    This switch reads state from the cached power state maintained by the
+    Power State sensor, eliminating redundant BLE polling.
+
+    State Logic:
+    - ON when power state is 0x02 (Standby)
+    - OFF for all other states
+    """
 
     def __init__(self, device: BasestationDevice, entry_id: str) -> None:
         """Initialize the standby switch."""
@@ -215,8 +263,6 @@ class BasestationStandbySwitch(SwitchEntity):
         self._attr_unique_id = f"basestation_{device.mac}_standby"
         self._attr_name = f"{device.device_name} Standby Mode"
         self._attr_icon = "mdi:sleep"
-        self._is_in_standby = False
-        self._last_update = 0.0
 
         # Share device info with main switch
         self._attr_device_info = DeviceInfo(
@@ -227,8 +273,17 @@ class BasestationStandbySwitch(SwitchEntity):
 
     @property
     def is_on(self) -> bool:
-        """Return if standby mode is active."""
-        return self._is_in_standby
+        """
+        Return if standby mode is active.
+
+        Reads from the cached power state:
+        - Standby (0x02) -> ON
+        - Any other state -> OFF
+        """
+        if isinstance(self._device, ValveBasestationDevice):
+            # Use the device's built-in standby check
+            return self._device.is_in_standby
+        return False
 
     @property
     def available(self) -> bool:
@@ -240,8 +295,7 @@ class BasestationStandbySwitch(SwitchEntity):
         if isinstance(self._device, ValveBasestationDevice):
             _LOGGER.debug("Setting standby mode on for: %s", self._device.mac)
             await self._device.set_standby()
-            self._is_in_standby = True
-            # Update state immediately
+            # State will be updated by the Power State sensor
             self.async_write_ha_state()
 
     async def async_turn_off(self, **_kwargs: Any) -> None:
@@ -249,30 +303,17 @@ class BasestationStandbySwitch(SwitchEntity):
         if isinstance(self._device, ValveBasestationDevice):
             _LOGGER.debug("Setting standby mode off for: %s", self._device.mac)
             await self._device.turn_on()
-            self._is_in_standby = False
-            # Update state immediately
+            # State will be updated by the Power State sensor
             self.async_write_ha_state()
 
     async def async_update(self) -> None:
-        """Update the standby state based on device state."""
-        current_time = time.time()
-        if current_time - self._last_update < STANDBY_SWITCH_SCAN_INTERVAL:
-            return
+        """
+        Update entity state.
 
-        if isinstance(self._device, ValveBasestationDevice):
-            # Get the raw power state value to determine if in standby mode
-            raw_state = await self._device.get_raw_power_state()
-
-            # Update standby state - 0x02 is the standby state value
-            if raw_state == STANDBY_STATE_VALUE:
-                if not self._is_in_standby:
-                    self._is_in_standby = True
-                    _LOGGER.debug("Standby state changed to ON for %s", self._device.mac)
-            elif raw_state is not None and self._is_in_standby:
-                self._is_in_standby = False
-                _LOGGER.debug("Standby state changed to OFF for %s", self._device.mac)
-
-            self._last_update = current_time
+        This switch reads from the cached power state, so no polling is needed.
+        The state is kept up to date by the Power State sensor.
+        """
+        # No polling needed - state is read from cache via is_on property
 
     async def async_will_remove_from_hass(self) -> None:
         """Clean up when entity is being removed."""

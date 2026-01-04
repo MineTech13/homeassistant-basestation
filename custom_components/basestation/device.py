@@ -11,6 +11,12 @@ Key Changes in v2.0.2:
 - Improved error recovery with exponential backoff
 - Added connection cooldown to prevent overwhelming base stations
 - Fixed resource exhaustion issues that caused devices to become unavailable
+
+Key Changes in v2.0.3 (Polling Optimization):
+- Power State sensor is now the single source of truth for device state
+- Switches and buttons read from cached state instead of making separate BLE requests
+- Device maintains _last_power_state with timestamp for state freshness checks
+- Dramatically reduced BLE connection overhead from ~3 requests per update to just 1
 """
 
 import asyncio
@@ -37,6 +43,7 @@ from .const import (
     INFO_SENSOR_SCAN_INTERVAL,
     MANUFACTURER_CHARACTERISTIC,
     MODEL_CHARACTERISTIC,
+    STANDBY_STATE_VALUE,
     V1_NAME_PREFIX,
     V1_PWR_CHARACTERISTIC,
     V2_CHANNEL_CHARACTERISTIC,
@@ -66,6 +73,9 @@ CONNECTION_COOLDOWN = 5.0  # Seconds to wait after failed connection before retr
 MAX_CONSECUTIVE_FAILURES = 5  # Max failures before extended cooldown
 EXTENDED_COOLDOWN = 30.0  # Extended cooldown for persistent failures
 MIN_FAILURES_FOR_UNAVAILABLE = 3  # Mark device unavailable after this many consecutive failures
+
+# State freshness for cached state
+STATE_FRESHNESS_THRESHOLD = 10.0  # Seconds - consider state stale after this
 
 type BaseStationDeviceInfoKey = Literal["firmware", "model", "hardware", "manufacturer", "channel", "pair_id"]
 
@@ -121,6 +131,7 @@ class BasestationDevice(ABC):
         self._info: dict[BaseStationDeviceInfoKey, str] = {}
         self._retry_count = 0
         self._last_power_state: int | None = None
+        self._last_power_state_update = 0.0
         self._last_device_info_read = 0.0
         self._device_info_read_success = False
 
@@ -152,6 +163,20 @@ class BasestationDevice(ABC):
     def available(self) -> bool:
         """Return if the device is available."""
         return self._available
+
+    @property
+    def last_power_state(self) -> int | None:
+        """Return the last known power state value."""
+        return self._last_power_state
+
+    @property
+    def has_fresh_state(self) -> bool:
+        """Return True if we have a recent power state."""
+        if self._last_power_state is None:
+            return False
+
+        age = time.time() - self._last_power_state_update
+        return age < STATE_FRESHNESS_THRESHOLD
 
     @property
     @abstractmethod
@@ -229,6 +254,20 @@ class BasestationDevice(ABC):
         # Mark as unavailable after multiple failures
         if self._consecutive_failures >= MIN_FAILURES_FOR_UNAVAILABLE:
             self._available = False
+
+    def _update_power_state(self, state: int) -> None:
+        """
+        Update the cached power state.
+
+        This method is called when we successfully read the power state from the device.
+        It updates both the state value and the timestamp.
+        """
+        self._last_power_state = state
+        self._last_power_state_update = time.time()
+
+        # Update the is_on flag based on state
+        # Device is considered "on" if not in sleep mode (0x00)
+        self._is_on = state != 0x00
 
     @overload
     async def async_ble_operation(self, op: BLEOperationRead) -> bytearray | Literal[False]: ...
@@ -544,26 +583,28 @@ class ValveBasestationDevice(BasestationDevice):
         """Return the default name."""
         return "Valve Basestation"
 
+    @property
+    def is_in_standby(self) -> bool:
+        """Return True if device is in standby mode (0x02)."""
+        return self._last_power_state == STANDBY_STATE_VALUE
+
     async def turn_on(self) -> None:
         """Turn on the device."""
         result = await self.async_ble_operation(BLEOperationWrite(V2_PWR_CHARACTERISTIC, V2_PWR_ON))
         if result:
-            self._is_on = True
-            self._last_power_state = 0x0B
+            self._update_power_state(0x0B)  # On state
 
     async def turn_off(self) -> None:
         """Turn off the device."""
         result = await self.async_ble_operation(BLEOperationWrite(V2_PWR_CHARACTERISTIC, V2_PWR_SLEEP))
         if result:
-            self._is_on = False
-            self._last_power_state = 0x00
+            self._update_power_state(0x00)  # Sleep state
 
     async def update(self) -> None:
         """Update the device state."""
         value = await self.async_ble_operation(BLEOperationRead(V2_PWR_CHARACTERISTIC))
         if value and len(value) > 0:
-            self._last_power_state = value[0]
-            self._is_on = value[0] != 0x00
+            self._update_power_state(value[0])
 
     async def get_raw_power_state(self) -> int | None:
         """Get the raw power state value."""
@@ -574,7 +615,7 @@ class ValveBasestationDevice(BasestationDevice):
         # Otherwise try to read it
         value = await self.async_ble_operation(BLEOperationRead(V2_PWR_CHARACTERISTIC))
         if value is not False and len(value) > 0:
-            self._last_power_state = value[0]
+            self._update_power_state(value[0])
             return value[0]
         return None
 
@@ -582,8 +623,7 @@ class ValveBasestationDevice(BasestationDevice):
         """Set the device to standby mode."""
         result = await self.async_ble_operation(BLEOperationWrite(V2_PWR_CHARACTERISTIC, V2_PWR_STANDBY))
         if result:
-            self._is_on = True
-            self._last_power_state = 0x02
+            self._update_power_state(0x02)  # Standby state
 
     async def identify(self) -> None:
         """Make the device blink its LED to identify it."""

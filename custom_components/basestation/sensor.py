@@ -1,4 +1,19 @@
-"""Sensor component for basestation integration."""
+"""
+Sensor component for basestation integration.
+
+CRITICAL: This module contains the Power State sensor which is the SINGLE SOURCE OF TRUTH
+for device state. The Power State sensor is the only entity that actively polls the BLE
+device for state updates. All other entities (switches, buttons) read from the cached
+state maintained by this sensor.
+
+Polling Architecture:
+- Power State Sensor (this file): Actively polls device every 5 seconds (configurable)
+- Main Power Switch: Reads from device._last_power_state (no polling)
+- Standby Mode Switch: Reads from device._last_power_state (no polling)
+- Identify Button: Uses device.has_fresh_state for availability (no polling)
+
+This architecture reduces BLE overhead from ~3 requests per update cycle to just 1.
+"""
 
 import asyncio
 import logging
@@ -191,7 +206,7 @@ def _create_valve_sensors(device: ValveBasestationDevice, config: dict[str, Any]
 
     V2 basestations support additional features:
     - Channel sensor (communication channel)
-    - Power state sensor (detailed power state information)
+    - Power state sensor (detailed power state information) - SINGLE SOURCE OF TRUTH
 
     Args:
         device: The Valve basestation device
@@ -210,8 +225,13 @@ def _create_valve_sensors(device: ValveBasestationDevice, config: dict[str, Any]
         )
 
     # Add the power state sensor for V2 devices if enabled
+    # CRITICAL: This is the only entity that actively polls for power state!
     if config["enable_power_state_sensor"]:
         entities.append(BasestationPowerStateSensor(device, config["power_state_scan_interval"]))
+        _LOGGER.info(
+            "Power State sensor enabled for %s - this will be the single source of truth for device state",
+            device.mac,
+        )
 
     return entities
 
@@ -381,9 +401,22 @@ class BasestationPowerStateSensor(SensorEntity):
     """
     Sensor for basestation power state.
 
-    This sensor displays the current power state of V2 basestations in
-    human-readable format (Sleep, Standby, On, etc.). It uses a faster
-    scan interval than info sensors since power state can change frequently.
+    CRITICAL: This is the SINGLE SOURCE OF TRUTH for device power state!
+
+    This sensor:
+    - Actively polls the BLE device for power state updates
+    - Updates the device._last_power_state cache that other entities read from
+    - Displays the current power state in human-readable format
+
+    Other entities (switches, buttons) read from the cached state maintained
+    by this sensor instead of making their own BLE requests.
+
+    State values:
+    - 0x00: Sleep
+    - 0x01: Starting Up
+    - 0x02: Standby
+    - 0x08, 0x09: Booting
+    - 0x0B: On
     """
 
     def __init__(self, device: BasestationDevice, scan_interval: int = DEFAULT_POWER_STATE_SCAN_INTERVAL) -> None:
@@ -407,6 +440,12 @@ class BasestationPowerStateSensor(SensorEntity):
         # Share device info with main device
         self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, device.mac)})
 
+        _LOGGER.debug(
+            "Initialized Power State sensor for %s - this will actively poll every %d seconds",
+            device.mac,
+            scan_interval,
+        )
+
     @property
     def available(self) -> bool:
         """
@@ -421,9 +460,10 @@ class BasestationPowerStateSensor(SensorEntity):
         """
         Update the power state sensor.
 
-        This method uses the user-configured scan interval to check the
-        current power state of the basestation and convert it to a
-        human-readable format.
+        CRITICAL: This method actively polls the BLE device and updates the
+        device._last_power_state cache that all other entities read from.
+
+        This is the ONLY entity that should be actively polling for power state!
         """
         current_time = time.time()
 
@@ -433,11 +473,12 @@ class BasestationPowerStateSensor(SensorEntity):
 
         if isinstance(self._device, ValveBasestationDevice):
             try:
-                # Update the device state
+                # Update the device state - this actively polls the BLE device
                 await self._device.update()
 
                 # Read raw power state value (0x00, 0x01, 0x02, 0x0B, etc.)
-                value = await self._device.get_raw_power_state()
+                # This reads from the freshly updated cache
+                value = self._device.last_power_state
 
                 if value is not None:
                     # Convert numeric state to human-readable format
@@ -446,9 +487,10 @@ class BasestationPowerStateSensor(SensorEntity):
 
                     if new_state != self._attr_native_value:
                         _LOGGER.debug(
-                            "Power state changed for %s: %s",
+                            "Power state changed for %s: %s (0x%02X)",
                             self._device.mac,
                             new_state,
+                            value,
                         )
 
                     self._attr_native_value = new_state
