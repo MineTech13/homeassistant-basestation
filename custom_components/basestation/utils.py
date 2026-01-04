@@ -11,17 +11,13 @@ from .const import (
     CONF_CONNECTION_TIMEOUT,
     CONF_DEVICE_TYPE,
     CONF_ENABLE_INFO_SENSORS,
-    CONF_ENABLE_POWER_STATE_SENSOR,
     CONF_INFO_SCAN_INTERVAL,
     CONF_PAIR_ID,
     CONF_POWER_STATE_SCAN_INTERVAL,
-    CONF_STANDBY_SCAN_INTERVAL,
     DEFAULT_CONNECTION_TIMEOUT,
     DEFAULT_ENABLE_INFO_SENSORS,
-    DEFAULT_ENABLE_POWER_STATE_SENSOR,
     DEFAULT_INFO_SCAN_INTERVAL,
     DEFAULT_POWER_STATE_SCAN_INTERVAL,
-    DEFAULT_STANDBY_SCAN_INTERVAL,
 )
 
 if TYPE_CHECKING:
@@ -105,17 +101,17 @@ def get_sensor_device_config(entry: ConfigEntry) -> dict[str, Any] | None:
     # Get sensor-specific options
     options = entry.options
     enable_info_sensors = options.get(CONF_ENABLE_INFO_SENSORS, DEFAULT_ENABLE_INFO_SENSORS)
-    enable_power_state_sensor = options.get(CONF_ENABLE_POWER_STATE_SENSOR, DEFAULT_ENABLE_POWER_STATE_SENSOR)
+    # Power state sensor is always enabled (critical for optimal performance)
+    enable_power_state_sensor = True
     info_scan_interval = options.get(CONF_INFO_SCAN_INTERVAL, DEFAULT_INFO_SCAN_INTERVAL)
     power_state_scan_interval = options.get(CONF_POWER_STATE_SCAN_INTERVAL, DEFAULT_POWER_STATE_SCAN_INTERVAL)
-    standby_scan_interval = options.get(CONF_STANDBY_SCAN_INTERVAL, DEFAULT_STANDBY_SCAN_INTERVAL)
 
     _LOGGER.info(
-        "Setting up sensors for device: %s (%s) - Info sensors: %s, Power state sensor: %s",
+        "Setting up sensors for device: %s (%s) - Info sensors: %s, Power state sensor: always enabled (interval: %ds)",
         basic_config["name"] or basic_config["mac"],
         basic_config["mac"],
         enable_info_sensors,
-        enable_power_state_sensor,
+        power_state_scan_interval,
     )
 
     # Combine basic config with sensor-specific options
@@ -125,5 +121,4 @@ def get_sensor_device_config(entry: ConfigEntry) -> dict[str, Any] | None:
         "enable_power_state_sensor": enable_power_state_sensor,
         "info_scan_interval": info_scan_interval,
         "power_state_scan_interval": power_state_scan_interval,
-        "standby_scan_interval": standby_scan_interval,
     }

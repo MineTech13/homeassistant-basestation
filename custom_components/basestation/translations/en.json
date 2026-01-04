@@ -40,24 +40,20 @@
     "step": {
       "device_options": {
         "title": "Configure {device_name}",
-        "description": "Configure settings for your {device_type}. You can adjust scan intervals, timeouts, and enable/disable specific sensors.",
+        "description": "Configure settings for your {device_type}. Adjust scan intervals, timeouts, and enable/disable specific sensors.",
         "data": {
           "name": "Device Name",
           "info_scan_interval": "Device Info Scan Interval (seconds)",
-          "power_state_scan_interval": "Power State Scan Interval (seconds)",
-          "standby_scan_interval": "Standby State Scan Interval (seconds)",
+          "power_state_scan_interval": "State Update Interval (seconds)",
           "connection_timeout": "Bluetooth Connection Timeout (seconds)",
-          "enable_info_sensors": "Enable Device Information Sensors",
-          "enable_power_state_sensor": "Enable Power State Sensor"
+          "enable_info_sensors": "Enable Device Information Sensors"
         },
         "data_description": {
           "name": "Custom name for this basestation device",
           "info_scan_interval": "How often to read device information like firmware and model (minimum 300 seconds)",
-          "power_state_scan_interval": "How often to check the current power state (minimum 1 second, only for Valve basestations)",
-          "standby_scan_interval": "How often to check standby mode status (minimum 1 second, only for Valve basestations)",
+          "power_state_scan_interval": "How often to update device state - controls switches, buttons, and sensor (minimum 1 second, Valve basestations only)",
           "connection_timeout": "Maximum time to wait for Bluetooth connections (minimum 5 seconds)",
-          "enable_info_sensors": "Show sensors for firmware, model, hardware, and manufacturer information",
-          "enable_power_state_sensor": "Show sensor displaying current power state (Sleep, Standby, On, etc.)"
+          "enable_info_sensors": "Show sensors for firmware, model, hardware, and manufacturer information"
         }
       }
     },

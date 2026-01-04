@@ -30,13 +30,16 @@ CONF_DEVICE_TYPE = "device_type"
 CONF_PAIR_ID = "pair_id"  # For V1 basestations
 CONF_SETUP_METHOD = "setup_method"
 
-# Options flow configuration keys
+# Options flow configuration keys (current)
 CONF_INFO_SCAN_INTERVAL = "info_scan_interval"
 CONF_POWER_STATE_SCAN_INTERVAL = "power_state_scan_interval"
-CONF_STANDBY_SCAN_INTERVAL = "standby_scan_interval"
 CONF_CONNECTION_TIMEOUT = "connection_timeout"
 CONF_ENABLE_INFO_SENSORS = "enable_info_sensors"
-CONF_ENABLE_POWER_STATE_SENSOR = "enable_power_state_sensor"
+
+# Deprecated options (kept for migration compatibility only)
+# These are no longer used but kept to prevent errors when upgrading
+CONF_STANDBY_SCAN_INTERVAL = "standby_scan_interval"  # DEPRECATED in v2.0.3 - standby switch reads from cache
+CONF_ENABLE_POWER_STATE_SENSOR = "enable_power_state_sensor"  # DEPRECATED in v2.0.3 - always enabled (critical)
 
 # Setup methods - simplified for device-based architecture
 SETUP_MANUAL = "manual"
@@ -58,18 +61,16 @@ V2_STATE_DESCRIPTIONS = {
 
 # Default scan intervals (in seconds)
 DEFAULT_INFO_SCAN_INTERVAL = 1800  # 30 minutes - for static info sensors
-DEFAULT_POWER_STATE_SCAN_INTERVAL = 5  # 5 seconds - for power state sensor
-DEFAULT_STANDBY_SCAN_INTERVAL = 5  # 5 seconds - for standby switch
+DEFAULT_POWER_STATE_SCAN_INTERVAL = 5  # 5 seconds - for power state sensor (controls ALL state freshness)
 DEFAULT_CONNECTION_TIMEOUT = 10  # 10 seconds - BLE connection timeout
 
 # Default sensor enablement
 DEFAULT_ENABLE_INFO_SENSORS = True  # Enable device info sensors by default
-DEFAULT_ENABLE_POWER_STATE_SENSOR = True  # Enable power state sensor by default
 
 # Legacy constants for backward compatibility
 INFO_SENSOR_SCAN_INTERVAL = DEFAULT_INFO_SCAN_INTERVAL
 POWER_STATE_SCAN_INTERVAL = DEFAULT_POWER_STATE_SCAN_INTERVAL
-STANDBY_SWITCH_SCAN_INTERVAL = DEFAULT_STANDBY_SCAN_INTERVAL
+# STANDBY_SWITCH_SCAN_INTERVAL removed - no longer used in v2.0.3
 
 # Initial device info setup retries
 INITIAL_RETRY_DELAY = 2  # seconds
