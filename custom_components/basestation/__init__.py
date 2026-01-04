@@ -6,17 +6,17 @@ import logging
 from typing import TYPE_CHECKING
 
 import voluptuous as vol
-from homeassistant.const import (
-    CONF_MAC,
-    CONF_NAME,
-    Platform,
-)
+from homeassistant.config_entries import SOURCE_IMPORT
+from homeassistant.const import CONF_MAC, CONF_NAME, Platform
 from homeassistant.helpers import config_validation as cv
 
 from .const import (
     CONF_DEVICE_TYPE,
+    CONF_POWER_STATE_SCAN_INTERVAL,
+    DEFAULT_POWER_STATE_SCAN_INTERVAL,
     DOMAIN,
 )
+from .coordinator import BasestationCoordinator
 from .device import BasestationDevice, get_basestation_device
 from .services import async_setup_services
 
@@ -26,10 +26,8 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
-# Define supported platforms
 PLATFORMS = [Platform.SWITCH, Platform.BUTTON, Platform.SENSOR]
 
-# Define validation for a single basestation entry in YAML configuration
 BASESTATION_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_MAC): cv.string,
@@ -38,7 +36,6 @@ BASESTATION_SCHEMA = vol.Schema(
     },
 )
 
-# Define a schema that allows for both config entries and legacy YAML config
 CONFIG_SCHEMA = vol.Schema(
     {
         DOMAIN: cv.schema_with_slug_keys(BASESTATION_SCHEMA),
@@ -46,64 +43,73 @@ CONFIG_SCHEMA = vol.Schema(
     extra=vol.ALLOW_EXTRA,
 )
 
+# Constants for MAC formatting
+MAC_LENGTH_NO_SEPARATORS = 12
+MAC_SEPARATOR_INTERVAL = 2
+
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Set up the VR Basestation component."""
-    # Initialize the domain data storage
     hass.data.setdefault(DOMAIN, {})
 
-    # Handle legacy YAML configuration if present
     if DOMAIN in config:
         yaml_devices = config[DOMAIN]
         _LOGGER.info(
-            "Found %s basestation(s) configured in YAML. "
-            "The integration will automatically migrate these to config entries.",
+            "Found %s basestation(s) configured in YAML. Starting migration.",
             len(yaml_devices),
         )
 
-        # Log details about found devices for debugging
+        migrated_count = 0
         for device_key, device_config in yaml_devices.items():
-            mac = device_config.get(CONF_MAC, "unknown")
+            mac = device_config.get(CONF_MAC)
             name = device_config.get(CONF_NAME, device_key)
-            _LOGGER.debug("Found YAML device: %s (MAC: %s, Key: %s)", name, mac, device_key)
 
-        # Create a notification to inform the user about the migration process
-        notification_data = {
-            "message": (
-                f"Found {len(yaml_devices)} VR Basestation(s) in your YAML configuration.\n\n"
-                f"The integration is automatically migrating these devices to the new UI-based "
-                f"configuration system. Each device will be created as a separate integration entry.\n\n"
-                f"Once migration is complete, you can remove the basestation entries from "
-                f"your configuration.yaml file.\n\n"
-                f"Check Settings → Devices & Services for your migrated devices."
-            ),
-            "title": "VR Basestation: YAML Migration in Progress",
-            "notification_id": "basestation_yaml_migration_notice",
-        }
+            if not mac:
+                continue
 
-        # Create the notification
-        hass.services.call("persistent_notification", "create", notification_data)
+            # Format MAC address
+            formatted_mac = mac.replace(":", "").replace("-", "").replace(" ", "").upper()
+            if len(formatted_mac) == MAC_LENGTH_NO_SEPARATORS:
+                formatted_mac = ":".join(
+                    formatted_mac[i : i + MAC_SEPARATOR_INTERVAL]
+                    for i in range(0, MAC_LENGTH_NO_SEPARATORS, MAC_SEPARATOR_INTERVAL)
+                )
 
-    _LOGGER.info("VR Basestation integration setup complete. Bluetooth discovery is now active.")
+            # Trigger import flow
+            hass.async_create_task(
+                hass.config_entries.flow.async_init(
+                    DOMAIN, context={"source": SOURCE_IMPORT}, data={CONF_MAC: formatted_mac, CONF_NAME: name}
+                )
+            )
+            migrated_count += 1
+
+        if migrated_count > 0:
+            notification_data = {
+                "message": (
+                    f"Migrating {migrated_count} VR Basestation(s) from YAML to UI.\n\n"
+                    f"You can remove the basestation entries from your configuration.yaml once complete."
+                ),
+                "title": "VR Basestation: YAML Migration",
+                "notification_id": "basestation_yaml_migration_notice",
+            }
+            hass.services.call("persistent_notification", "create", notification_data)
+
     return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up VR Basestation from a config entry."""
-    # Ensure domain data exists
     hass.data.setdefault(DOMAIN, {})
 
-    # Store entry data for this device
-    hass.data[DOMAIN][entry.entry_id] = entry.data
-
-    # Create the device instance and store it for cleanup later
     mac = entry.data.get(CONF_MAC)
     name = entry.data.get(CONF_NAME)
     device_type = entry.data.get(CONF_DEVICE_TYPE)
     pair_id = entry.data.get("pair_id")
 
+    # Get scan interval from options or defaults
+    scan_interval = entry.options.get(CONF_POWER_STATE_SCAN_INTERVAL, DEFAULT_POWER_STATE_SCAN_INTERVAL)
+
     if mac:
-        # Create device instance and store it
         device = get_basestation_device(
             hass,
             mac,
@@ -112,48 +118,34 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             pair_id=pair_id,
         )
 
-        # Store device instance for cleanup
-        hass.data[DOMAIN][f"{entry.entry_id}_device"] = device
+        # Setup Coordinator
+        coordinator = BasestationCoordinator(hass, device, scan_interval)
 
-    # Set up entities for this entry across all platforms
+        # Initial refresh
+        await coordinator.async_config_entry_first_refresh()
+
+        # Store device and coordinator
+        hass.data[DOMAIN][entry.entry_id] = {"device": device, "coordinator": coordinator}
+
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-
-    # Set up services (only needs to be done once, but calling multiple times is safe)
     await async_setup_services(hass)
-
-    _LOGGER.info(
-        "Successfully set up VR Basestation device: %s (%s)",
-        entry.title,
-        entry.data.get(CONF_MAC, "unknown"),
-    )
 
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    _LOGGER.debug("Unloading VR Basestation config entry: %s", entry.title)
+    # Get device for cleanup
+    data = hass.data[DOMAIN].get(entry.entry_id)
+    device = data.get("device") if data else None
 
-    # Get the device instance for cleanup
-    device_key = f"{entry.entry_id}_device"
-    device = hass.data[DOMAIN].get(device_key)
-
-    # Clean up device resources if it exists
     if device and isinstance(device, BasestationDevice):
         try:
             await device.cleanup()
-            _LOGGER.debug("Cleaned up device resources for %s", entry.title)
         except Exception as e:
-            _LOGGER.warning("Error cleaning up device resources for %s: %s", entry.title, e)
+            _LOGGER.warning("Error cleaning up device resources: %s", e)
 
-    # Unload entities for this config entry across all platforms
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
-        # Remove stored entry data
         hass.data[DOMAIN].pop(entry.entry_id, None)
-        # Remove device instance
-        hass.data[DOMAIN].pop(device_key, None)
-        _LOGGER.info("Successfully unloaded VR Basestation device: %s", entry.title)
-    else:
-        _LOGGER.error("Failed to unload VR Basestation config entry: %s", entry.title)
 
     return unload_ok

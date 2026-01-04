@@ -1,116 +1,19 @@
-"""
-The basestation switch component.
-
-This module has been optimized to reduce BLE polling. The switches now read
-from the cached power state that is maintained by the Power State sensor,
-eliminating redundant BLE requests.
-
-State Mapping:
-- Sleep (0x00) -> LHB OFF, Standby Mode OFF
-- Standby (0x02) -> LHB ON, Standby Mode ON
-- Booting/Starting/On (0x01, 0x08, 0x09, 0x0B) -> LHB ON, Standby Mode OFF
-"""
+"""The basestation switch component."""
 
 import logging
 from typing import Any
 
 from homeassistant.components.switch import SwitchEntity
-from homeassistant.config_entries import SOURCE_IMPORT, ConfigEntry
-from homeassistant.const import CONF_MAC, CONF_NAME
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import (
-    DOMAIN,
-)
-from .device import (
-    BasestationDevice,
-    ValveBasestationDevice,
-    get_basestation_device,
-)
-from .utils import get_basic_device_config
+from .const import DOMAIN
+from .coordinator import BasestationCoordinator
+from .device import BasestationDevice, ValveBasestationDevice
 
 _LOGGER = logging.getLogger(__name__)
-
-# Track MAC addresses that have been notified about migration
-NOTIFIED_MACS = set()
-
-# Constants for magic numbers
-MAC_LENGTH_NO_SEPARATORS = 12
-MAC_SEPARATOR_INTERVAL = 2
-
-
-def setup_platform(
-    hass: HomeAssistant,
-    config: dict,
-    _add_entities: Any,
-    _discovery_info: Any = None,
-) -> bool:
-    """Set up the basestation platform from YAML configuration and trigger migration."""
-    _LOGGER.info("Found YAML configuration for basestation, starting migration to config entries")
-
-    mac = config.get(CONF_MAC)
-    name = config.get(CONF_NAME)
-
-    if not mac:
-        _LOGGER.error("MAC address is required for basestation setup")
-        return False
-
-    # Format MAC address consistently
-    formatted_mac = mac.replace(":", "").replace("-", "").replace(" ", "").upper()
-    if len(formatted_mac) == MAC_LENGTH_NO_SEPARATORS:
-        formatted_mac = ":".join(
-            formatted_mac[i : i + MAC_SEPARATOR_INTERVAL]
-            for i in range(0, MAC_LENGTH_NO_SEPARATORS, MAC_SEPARATOR_INTERVAL)
-        )
-
-    # Check if we've already processed this MAC address
-    if formatted_mac in NOTIFIED_MACS:
-        _LOGGER.debug("Already processed migration for %s", formatted_mac)
-        return True
-
-    NOTIFIED_MACS.add(formatted_mac)
-
-    # Prepare import data
-    import_data = {
-        CONF_MAC: formatted_mac,
-        CONF_NAME: name,
-    }
-
-    # Define async function to handle the import flow
-    async def async_start_import() -> None:
-        """Start the import flow asynchronously."""
-        try:
-            _LOGGER.info("Starting import flow for basestation %s (%s)", name or "Unnamed", formatted_mac)
-            await hass.config_entries.flow.async_init(DOMAIN, context={"source": SOURCE_IMPORT}, data=import_data)
-            _LOGGER.info("Import flow started successfully for %s", formatted_mac)
-        except Exception:
-            _LOGGER.exception("Failed to start import flow for %s", formatted_mac)
-
-    # Use hass.add_job() to schedule the async work - this is thread-safe
-    hass.add_job(async_start_import())
-
-    # Create a notification about the migration
-    notification_data = {
-        "message": (
-            f"Found Valve Basestation '{name if name else formatted_mac}' configured in YAML.\n\n"
-            f"The integration is automatically migrating this device to the UI configuration. "
-            f"Once the migration is complete, you can safely remove this entry from your configuration.yaml:\n\n"
-            f"```yaml\nswitch:\n  - platform: basestation\n    "
-            f"mac: '{mac}'\n    name: '{name if name else 'Valve Basestation'}'\n```\n\n"
-            f"The migrated device will appear in Settings → Devices & Services."
-        ),
-        "title": "Valve Basestation: Configuration Migration",
-        "notification_id": f"basestation_migration_{formatted_mac.replace(':', '_')}",
-    }
-
-    # Create the notification using thread-safe service call
-    hass.services.call("persistent_notification", "create", notification_data)
-
-    # Don't set up any entities from YAML - they will be created by the config entry
-    _LOGGER.debug("YAML platform setup completed for %s, entities will be created by config entry", formatted_mac)
-    return True
 
 
 async def async_setup_entry(
@@ -119,202 +22,77 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the basestation switch from a config entry."""
-    _LOGGER.debug("Setting up basestation switch entities for entry: %s", entry.title)
+    data = hass.data[DOMAIN][entry.entry_id]
+    device: BasestationDevice = data["device"]
+    coordinator: BasestationCoordinator = data["coordinator"]
 
-    # Get device configuration from the config entry using shared utility
-    device_config = get_basic_device_config(entry)
-    if not device_config:
-        return
+    entities = [BasestationSwitch(coordinator, device)]
 
-    # Create the basestation device instance
-    device = get_basestation_device(
-        hass,
-        device_config["mac"],
-        name=device_config["name"],
-        device_type=device_config["device_type"],
-        pair_id=device_config["pair_id"],
-        connection_timeout=device_config["connection_timeout"],
-    )
-
-    if not device:
-        _LOGGER.error("Failed to create device for MAC: %s", device_config["mac"])
-        return
-
-    # Create the switch entities for this device
-    entities = [BasestationSwitch(device, entry.entry_id)]
-
-    # Add standby switch for Valve basestations (V2 devices)
     if isinstance(device, ValveBasestationDevice):
-        entities.append(BasestationStandbySwitch(device, entry.entry_id))
-        _LOGGER.debug("Added standby switch for Valve basestation: %s", device_config["mac"])
+        entities.append(BasestationStandbySwitch(coordinator, device))
 
-    # Add all entities to Home Assistant
-    async_add_entities(entities, update_before_add=True)
-    _LOGGER.info(
-        "Successfully added %d switch entities for %s setup: %s",
-        len(entities),
-        device_config["setup_method"],
-        device_config["name"] or device_config["mac"],
-    )
+    async_add_entities(entities)
 
 
-class BasestationSwitch(SwitchEntity):
-    """
-    Representation of a basestation main power switch.
+class BasestationSwitch(CoordinatorEntity, SwitchEntity):
+    """Representation of a basestation main power switch."""
 
-    This switch reads state from the cached power state maintained by the
-    Power State sensor, eliminating redundant BLE polling.
-
-    State Logic:
-    - OFF when power state is 0x00 (Sleep)
-    - ON for all other states (0x01, 0x02, 0x08, 0x09, 0x0B)
-    """
-
-    def __init__(self, device: BasestationDevice, entry_id: str) -> None:
-        """Initialize the switch."""
+    def __init__(self, coordinator: BasestationCoordinator, device: BasestationDevice) -> None:
+        super().__init__(coordinator)
         self._device = device
-        self._entry_id = entry_id
         self._attr_unique_id = f"basestation_{device.mac}"
         self._attr_name = device.device_name
         self._attr_icon = "mdi:virtual-reality"
-
-        # Create device info for Home Assistant device registry
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, device.mac)},
-            name=device.device_name,
-            manufacturer=("Valve" if isinstance(device, ValveBasestationDevice) else "HTC"),
-            model=("Index Basestation" if isinstance(device, ValveBasestationDevice) else "Vive Basestation"),
-        )
-
-        _LOGGER.debug("Initialized BasestationSwitch for %s (%s)", device.device_name, device.mac)
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, device.mac)},
+            "name": device.device_name,
+            "manufacturer": "Valve" if isinstance(device, ValveBasestationDevice) else "HTC",
+            "model": "Index Basestation" if isinstance(device, ValveBasestationDevice) else "Vive Basestation",
+        }
 
     @property
     def is_on(self) -> bool:
-        """
-        Return if the switch is currently on or off.
-
-        Reads from the cached power state:
-        - Sleep (0x00) -> OFF
-        - Any other state -> ON
-        """
-        # For V2 devices, read from cached power state
+        """Return if the switch is currently on or off."""
         if isinstance(self._device, ValveBasestationDevice):
             if self._device.last_power_state is None:
-                # No state available yet, assume off
                 return False
-            # Device is ON if not in sleep mode (0x00)
             return self._device.last_power_state != 0x00
-
-        # For V1 devices, use the device's is_on property
         return self._device.is_on
-
-    @property
-    def available(self) -> bool:
-        """Return if the device is available."""
-        return self._device.available
 
     async def async_turn_on(self, **_kwargs: Any) -> None:
         """Turn the switch on."""
-        _LOGGER.debug("Turning on basestation: %s", self._device.mac)
         await self._device.turn_on()
-        # State will be updated by the Power State sensor or device update
-        self.async_write_ha_state()
+        await self.coordinator.async_request_refresh()
 
     async def async_turn_off(self, **_kwargs: Any) -> None:
         """Turn the switch off."""
-        _LOGGER.debug("Turning off basestation: %s", self._device.mac)
         await self._device.turn_off()
-        # State will be updated by the Power State sensor or device update
-        self.async_write_ha_state()
-
-    async def async_update(self) -> None:
-        """
-        Update entity state.
-
-        For V2 devices with Power State sensor enabled, this just reads
-        the cached state. For V1 devices or when sensor is disabled,
-        this polls the device directly.
-        """
-        # Only poll if we don't have fresh state (V1 devices or fallback)
-        if not isinstance(self._device, ValveBasestationDevice) or not self._device.has_fresh_state:
-            await self._device.update()
-
-    async def async_will_remove_from_hass(self) -> None:
-        """Clean up when entity is being removed."""
-        await self._device.cleanup()
+        await self.coordinator.async_request_refresh()
 
 
-class BasestationStandbySwitch(SwitchEntity):
-    """
-    Representation of a basestation standby switch (V2 only).
+class BasestationStandbySwitch(CoordinatorEntity, SwitchEntity):
+    """Representation of a basestation standby switch (V2 only)."""
 
-    This switch reads state from the cached power state maintained by the
-    Power State sensor, eliminating redundant BLE polling.
-
-    State Logic:
-    - ON when power state is 0x02 (Standby)
-    - OFF for all other states
-    """
-
-    def __init__(self, device: BasestationDevice, entry_id: str) -> None:
-        """Initialize the standby switch."""
+    def __init__(self, coordinator: BasestationCoordinator, device: BasestationDevice) -> None:
+        super().__init__(coordinator)
         self._device = device
-        self._entry_id = entry_id
         self._attr_unique_id = f"basestation_{device.mac}_standby"
         self._attr_name = f"{device.device_name} Standby Mode"
         self._attr_icon = "mdi:sleep"
-
-        # Share device info with main switch
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, device.mac)},
-        )
-
-        _LOGGER.debug("Initialized BasestationStandbySwitch for %s", device.mac)
+        self._attr_device_info = {"identifiers": {(DOMAIN, device.mac)}}
 
     @property
     def is_on(self) -> bool:
-        """
-        Return if standby mode is active.
-
-        Reads from the cached power state:
-        - Standby (0x02) -> ON
-        - Any other state -> OFF
-        """
         if isinstance(self._device, ValveBasestationDevice):
-            # Use the device's built-in standby check
             return self._device.is_in_standby
         return False
 
-    @property
-    def available(self) -> bool:
-        """Return if the device is available."""
-        return self._device.available
-
     async def async_turn_on(self, **_kwargs: Any) -> None:
-        """Turn on standby mode (instead of full sleep)."""
         if isinstance(self._device, ValveBasestationDevice):
-            _LOGGER.debug("Setting standby mode on for: %s", self._device.mac)
             await self._device.set_standby()
-            # State will be updated by the Power State sensor
-            self.async_write_ha_state()
+            await self.coordinator.async_request_refresh()
 
     async def async_turn_off(self, **_kwargs: Any) -> None:
-        """Turn off standby mode (device will go to full on mode)."""
         if isinstance(self._device, ValveBasestationDevice):
-            _LOGGER.debug("Setting standby mode off for: %s", self._device.mac)
             await self._device.turn_on()
-            # State will be updated by the Power State sensor
-            self.async_write_ha_state()
-
-    async def async_update(self) -> None:
-        """
-        Update entity state.
-
-        This switch reads from the cached power state, so no polling is needed.
-        The state is kept up to date by the Power State sensor.
-        """
-        # No polling needed - state is read from cache via is_on property
-
-    async def async_will_remove_from_hass(self) -> None:
-        """Clean up when entity is being removed."""
-        # Standby switch shares the device with the main switch, so no cleanup needed
+            await self.coordinator.async_request_refresh()
