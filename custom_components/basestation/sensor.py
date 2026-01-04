@@ -1,8 +1,9 @@
 """Sensor component for basestation integration."""
 
+import asyncio
 import logging
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
@@ -12,10 +13,8 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
-    DEFAULT_INFO_SCAN_INTERVAL,
     DOMAIN,
     INITIAL_RETRY_DELAY,
-    MAX_CONSECUTIVE_FAILURES,
     MAX_INITIAL_RETRIES,
     V2_STATE_DESCRIPTIONS,
 )
@@ -46,7 +45,7 @@ async def async_setup_entry(
 
     # Initial info read
     if device_config["enable_info_sensors"]:
-        await _perform_initial_device_info_read(device, device.mac)
+        await _perform_initial_device_info_read(device)
 
     entities = []
 
@@ -85,7 +84,7 @@ async def async_setup_entry(
     async_add_entities(entities)
 
 
-async def _perform_initial_device_info_read(device: BasestationDevice, mac: str) -> None:
+async def _perform_initial_device_info_read(device: BasestationDevice) -> None:
     """Perform initial device info read with retries."""
     for retry in range(MAX_INITIAL_RETRIES):
         try:
@@ -93,13 +92,14 @@ async def _perform_initial_device_info_read(device: BasestationDevice, mac: str)
                 await asyncio.sleep(INITIAL_RETRY_DELAY * (retry + 1))
             if await device.read_device_info(force=True):
                 break
-        except Exception:
-            pass
+        except Exception as err:
+            _LOGGER.debug("Initial read failed (retry %s): %s", retry, err)
 
 
 class BasestationInfoSensor(SensorEntity):
     """
     Sensor for static basestation information.
+
     Not using coordinator as this data rarely changes and doesn't need 5s polling.
     """
 
@@ -111,6 +111,7 @@ class BasestationInfoSensor(SensorEntity):
         icon: str,
         scan_interval: int,
     ) -> None:
+        """Initialize the info sensor."""
         self._device = device
         self._key = key
         self._scan_interval = scan_interval
@@ -122,6 +123,7 @@ class BasestationInfoSensor(SensorEntity):
         self._attr_device_info = {"identifiers": {(DOMAIN, device.mac)}}
 
     async def async_update(self) -> None:
+        """Update the sensor value."""
         current_time = time.time()
         if current_time - self._last_update < self._scan_interval and self._attr_native_value != STATE_UNKNOWN:
             return
@@ -130,16 +132,15 @@ class BasestationInfoSensor(SensorEntity):
             await self._device.read_device_info(force=False)
             self._attr_native_value = self._device.get_info(self._key)
             self._last_update = current_time
-        except Exception:
-            pass
+        except Exception as err:
+            _LOGGER.debug("Error updating info sensor %s: %s", self.name, err)
 
 
 class BasestationPowerStateSensor(CoordinatorEntity, SensorEntity):
-    """
-    Sensor for basestation power state using the DataUpdateCoordinator.
-    """
+    """Sensor for basestation power state using the DataUpdateCoordinator."""
 
     def __init__(self, coordinator: BasestationCoordinator, device: BasestationDevice) -> None:
+        """Initialize the power state sensor."""
         super().__init__(coordinator)
         self._device = device
         self._attr_unique_id = f"basestation_{device.mac}_power_state"

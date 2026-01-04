@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
+import datetime
 import logging
-from datetime import timedelta
 from typing import TYPE_CHECKING
 
-from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import DOMAIN
-from .device import ValveBasestationDevice
 
 if TYPE_CHECKING:
+    from homeassistant.core import HomeAssistant
+
     from .device import BasestationDevice
 
 _LOGGER = logging.getLogger(__name__)
@@ -33,7 +33,7 @@ class BasestationCoordinator(DataUpdateCoordinator):
             hass,
             _LOGGER,
             name=f"{DOMAIN}_{device.mac}",
-            update_interval=timedelta(seconds=scan_interval),
+            update_interval=datetime.timedelta(seconds=scan_interval),
         )
 
     async def _async_update_data(self) -> None:
@@ -42,4 +42,5 @@ class BasestationCoordinator(DataUpdateCoordinator):
             # Dies führt das eigentliche BLE-Polling durch
             await self.device.update()
         except Exception as err:
-            raise UpdateFailed(f"Error communicating with basestation: {err}") from err
+            msg = f"Error communicating with basestation: {err}"
+            raise UpdateFailed(msg) from err

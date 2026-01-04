@@ -4,3 +4,4 @@
 __pycache__/
 config/
 **/*.egg-info/
+lint.log

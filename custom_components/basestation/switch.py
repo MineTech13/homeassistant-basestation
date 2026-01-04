@@ -38,6 +38,7 @@ class BasestationSwitch(CoordinatorEntity, SwitchEntity):
     """Representation of a basestation main power switch."""
 
     def __init__(self, coordinator: BasestationCoordinator, device: BasestationDevice) -> None:
+        """Initialize the switch."""
         super().__init__(coordinator)
         self._device = device
         self._attr_unique_id = f"basestation_{device.mac}"
@@ -74,6 +75,7 @@ class BasestationStandbySwitch(CoordinatorEntity, SwitchEntity):
     """Representation of a basestation standby switch (V2 only)."""
 
     def __init__(self, coordinator: BasestationCoordinator, device: BasestationDevice) -> None:
+        """Initialize the standby switch."""
         super().__init__(coordinator)
         self._device = device
         self._attr_unique_id = f"basestation_{device.mac}_standby"
@@ -83,16 +85,19 @@ class BasestationStandbySwitch(CoordinatorEntity, SwitchEntity):
 
     @property
     def is_on(self) -> bool:
+        """Return if the standby mode is active."""
         if isinstance(self._device, ValveBasestationDevice):
             return self._device.is_in_standby
         return False
 
     async def async_turn_on(self, **_kwargs: Any) -> None:
+        """Turn on standby mode."""
         if isinstance(self._device, ValveBasestationDevice):
             await self._device.set_standby()
             await self.coordinator.async_request_refresh()
 
     async def async_turn_off(self, **_kwargs: Any) -> None:
+        """Turn off standby mode (turn fully on)."""
         if isinstance(self._device, ValveBasestationDevice):
             await self._device.turn_on()
             await self.coordinator.async_request_refresh()

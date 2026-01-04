@@ -33,6 +33,7 @@ class BasestationIdentifyButton(CoordinatorEntity, ButtonEntity):
     """Button to identify the basestation by blinking its LED."""
 
     def __init__(self, coordinator: BasestationCoordinator, device: BasestationDevice) -> None:
+        """Initialize the identify button."""
         super().__init__(coordinator)
         self._device = device
         self._attr_unique_id = f"basestation_{device.mac}_identify"

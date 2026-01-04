@@ -1,6 +1,4 @@
-"""
-Device classes for basestation integration.
-"""
+"""Device classes for basestation integration."""
 
 import asyncio
 import logging
@@ -10,6 +8,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
 from attr import dataclass
+from bleak.backends.device import BLEDevice
 from bleak.exc import BleakError
 from bleak_retry_connector import BleakClientWithServiceCache, establish_connection
 from homeassistant.components import bluetooth
@@ -39,8 +38,6 @@ from .const import (
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-    from bleak.backends.device import BLEDevice
-
 _LOGGER = logging.getLogger(__name__)
 
 # Constants
@@ -58,7 +55,7 @@ type BaseStationDeviceInfoKey = Literal["firmware", "model", "hardware", "manufa
 
 @dataclass(repr=False)
 class BLEOperationRead:
-    """BLE read operation"""
+    """BLE read operation."""
 
     characteristic_uuid: str
     retry: bool = True
@@ -66,7 +63,7 @@ class BLEOperationRead:
 
 @dataclass(repr=False)
 class BLEOperationWrite:
-    """BLE write operation"""
+    """BLE write operation."""
 
     characteristic_uuid: str
     value: bytes
@@ -120,22 +117,27 @@ class BasestationDevice(ABC):
 
     @property
     def device_name(self) -> str:
+        """Return the name of the device."""
         return self.custom_name or self.default_name
 
     @property
     def is_on(self) -> bool:
+        """Return if device is on or not."""
         return self._is_on
 
     @property
     def available(self) -> bool:
+        """Return if the device is available."""
         return self._available
 
     @property
     def last_power_state(self) -> int | None:
+        """Return the last known power state value."""
         return self._last_power_state
 
     @property
     def has_fresh_state(self) -> bool:
+        """Return True if we have a recent power state."""
         if self._last_power_state is None:
             return False
         age = time.time() - self._last_power_state_update
@@ -144,27 +146,30 @@ class BasestationDevice(ABC):
     @property
     @abstractmethod
     def default_name(self) -> str:
-        pass
+        """Return the default name for this device type."""
 
     @abstractmethod
     async def turn_on(self) -> None:
-        pass
+        """Turn on the device."""
 
     @abstractmethod
     async def turn_off(self) -> None:
-        pass
+        """Turn off the device."""
 
     @abstractmethod
     async def update(self) -> None:
-        pass
+        """Update the device state."""
 
     def get_info(self, key: BaseStationDeviceInfoKey, default: Any | None = None) -> str | None:
+        """Get device info by key."""
         return self._info.get(key, default)
 
-    def get_ble_device(self) -> "BLEDevice | None":
+    def get_ble_device(self) -> BLEDevice | None:
+        """Get the BLE device from the address."""
         return bluetooth.async_ble_device_from_address(self.hass, self.mac)
 
     async def cleanup(self) -> None:
+        """Clean up resources when device is being removed."""
         async with self._client_lock:
             if self._current_client and self._current_client.is_connected:
                 try:
@@ -214,6 +219,7 @@ class BasestationDevice(ABC):
     @overload
     async def async_ble_operation(self, op: BLEOperationWrite) -> bool: ...
     async def async_ble_operation(self, op: BLEOperationRead | BLEOperationWrite) -> bool | bytearray:
+        """Execute a BLE operation with proper connection management."""
         if not self._should_attempt_connection():
             return False
 
@@ -299,7 +305,7 @@ class BasestationDevice(ABC):
                     info[key] = _value.decode("utf-8").strip()
                     any_read_successful = True
             except Exception:
-                pass
+                _LOGGER.debug("Failed to read characteristic %s", key)
         return any_read_successful
 
     async def _attempt_device_info_read(self) -> dict[BaseStationDeviceInfoKey, str] | None:
@@ -328,8 +334,8 @@ class BasestationDevice(ABC):
 
                 if std_success or spec_success:
                     return info
-        except Exception:
-            pass
+        except Exception as err:
+            _LOGGER.debug("Failed to read device info: %s", err)
         finally:
             async with self._client_lock:
                 self._is_connecting = False
@@ -337,6 +343,7 @@ class BasestationDevice(ABC):
         return None
 
     async def read_device_info(self, /, *, force: bool = False) -> dict[BaseStationDeviceInfoKey, str]:
+        """Read device information characteristics."""
         current_time = time.time()
         if (
             not force
@@ -387,32 +394,39 @@ class ValveBasestationDevice(BasestationDevice):
         name: str | None = None,
         connection_timeout: int = DEFAULT_CONNECTION_TIMEOUT,
     ) -> None:
+        """Initialize the Valve basestation device."""
         super().__init__(hass, mac, name, connection_timeout)
 
     @property
     def default_name(self) -> str:
+        """Return the default name."""
         return "Valve Basestation"
 
     @property
     def is_in_standby(self) -> bool:
+        """Return True if device is in standby mode (0x02)."""
         return self._last_power_state == STANDBY_STATE_VALUE
 
     async def turn_on(self) -> None:
+        """Turn on the device."""
         result = await self.async_ble_operation(BLEOperationWrite(V2_PWR_CHARACTERISTIC, V2_PWR_ON))
         if result:
             self._update_power_state(0x0B)
 
     async def turn_off(self) -> None:
+        """Turn off the device."""
         result = await self.async_ble_operation(BLEOperationWrite(V2_PWR_CHARACTERISTIC, V2_PWR_SLEEP))
         if result:
             self._update_power_state(0x00)
 
     async def update(self) -> None:
+        """Update the device state."""
         value = await self.async_ble_operation(BLEOperationRead(V2_PWR_CHARACTERISTIC))
         if value and len(value) > 0:
             self._update_power_state(value[0])
 
     async def get_raw_power_state(self) -> int | None:
+        """Get the raw power state value."""
         if self._last_power_state is not None:
             return self._last_power_state
         value = await self.async_ble_operation(BLEOperationRead(V2_PWR_CHARACTERISTIC))
@@ -422,11 +436,13 @@ class ValveBasestationDevice(BasestationDevice):
         return None
 
     async def set_standby(self) -> None:
+        """Set the device to standby mode."""
         result = await self.async_ble_operation(BLEOperationWrite(V2_PWR_CHARACTERISTIC, V2_PWR_STANDBY))
         if result:
             self._update_power_state(0x02)
 
     async def identify(self) -> None:
+        """Make the device blink its LED to identify it."""
         await self.async_ble_operation(BLEOperationWrite(V2_IDENTIFY_CHARACTERISTIC, b"\x00", without_response=True))
 
     async def _read_specific_info(
@@ -438,7 +454,7 @@ class ValveBasestationDevice(BasestationDevice):
                 info["channel"] = int.from_bytes(channel, byteorder="big")
                 return True
         except Exception:
-            pass
+            _LOGGER.debug("Failed to read channel")
         return False
 
 
@@ -453,6 +469,7 @@ class ViveBasestationDevice(BasestationDevice):
         pair_id: int | None = None,
         connection_timeout: int = DEFAULT_CONNECTION_TIMEOUT,
     ) -> None:
+        """Initialize the Vive basestation device."""
         super().__init__(hass, mac, name, connection_timeout)
         self.pair_id = pair_id
         if pair_id is not None:
@@ -460,9 +477,11 @@ class ViveBasestationDevice(BasestationDevice):
 
     @property
     def default_name(self) -> str:
+        """Return the default name."""
         return "Vive Basestation"
 
     async def turn_on(self) -> None:
+        """Turn on the device."""
         if not self.pair_id:
             return
         try:
@@ -472,9 +491,10 @@ class ViveBasestationDevice(BasestationDevice):
             if await self.async_ble_operation(BLEOperationWrite(V1_PWR_CHARACTERISTIC, bytes(command))):
                 self._is_on = True
         except Exception:
-            pass
+            _LOGGER.debug("Failed to turn on V1 basestation")
 
     async def turn_off(self) -> None:
+        """Turn off the device."""
         if not self.pair_id:
             return
         try:
@@ -484,9 +504,10 @@ class ViveBasestationDevice(BasestationDevice):
             if await self.async_ble_operation(BLEOperationWrite(V1_PWR_CHARACTERISTIC, bytes(command))):
                 self._is_on = False
         except Exception:
-            pass
+            _LOGGER.debug("Failed to turn off V1 basestation")
 
     async def update(self) -> None:
+        """Update the device state."""
         try:
             ble_device = self.get_ble_device()
             self._available = ble_device is not None
@@ -503,6 +524,7 @@ class ViveBasestationDevice(BasestationDevice):
 
 
 def get_basestation_device(hass: HomeAssistant, mac: str, /, **kwargs: Any) -> BasestationDevice:
+    """Create the appropriate device based on the device info."""
     name = kwargs.get("name")
     device_type = kwargs.get("device_type")
     pair_id = kwargs.get("pair_id")
@@ -517,6 +539,7 @@ def get_basestation_device(hass: HomeAssistant, mac: str, /, **kwargs: Any) -> B
 
 
 async def connect_delay(attempt: int) -> None:
+    """Delay based on prior connection attempts."""
     if attempt > 0:
         await asyncio.sleep(CONNECTION_DELAY * (2**attempt))
     await asyncio.sleep(CONNECTION_DELAY * 0.5)
