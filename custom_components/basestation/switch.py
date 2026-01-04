@@ -49,6 +49,7 @@ class BasestationSwitch(CoordinatorEntity, SwitchEntity):
             "name": device.device_name,
             "manufacturer": "Valve" if isinstance(device, ValveBasestationDevice) else "HTC",
             "model": "Index Basestation" if isinstance(device, ValveBasestationDevice) else "Vive Basestation",
+            "serial_number": device.mac,
         }
 
     @property
