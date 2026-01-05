@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import datetime
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
@@ -36,7 +36,7 @@ class BasestationCoordinator(DataUpdateCoordinator):
             update_interval=datetime.timedelta(seconds=scan_interval),
         )
 
-    async def _async_update_data(self) -> None:
+    async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from the device."""
         try:
             # Dies führt das eigentliche BLE-Polling durch
@@ -44,3 +44,9 @@ class BasestationCoordinator(DataUpdateCoordinator):
         except Exception as err:
             msg = f"Error communicating with basestation: {err}"
             raise UpdateFailed(msg) from err
+        else:
+            return {
+                "is_on": self.device.is_on,
+                "available": self.device.available,
+                "last_power_state": self.device.last_power_state,
+            }
