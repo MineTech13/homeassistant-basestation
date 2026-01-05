@@ -2,12 +2,12 @@
 name = "basestation"
 version = "2.0.1"
 dependencies = [
-    "bleak>=0.19.0",
-    "bleak-retry-connector>=3.5.0",
+    "bleak>=1.0.1",
+    "bleak-retry-connector>=4.4.3",
     "debugpy",
-    "homeassistant==2025.2.4",
-    "mypy~=1.15.0",
-    "ruff~=0.11.7",
+    "homeassistant==2025.12.5",
+    "mypy~=1.19.1",
+    "ruff~=0.14.0",
 ]
 requires-python = "~=3.13"
 
