@@ -42,7 +42,8 @@ class BasestationSwitch(CoordinatorEntity, SwitchEntity):
         super().__init__(coordinator)
         self._device = device
         self._attr_unique_id = f"basestation_{device.mac}"
-        self._attr_name = device.device_name
+        self._attr_has_entity_name = True
+        self._attr_name = None
         self._attr_icon = "mdi:virtual-reality"
         self._attr_device_info = {
             "identifiers": {(DOMAIN, device.mac)},
@@ -80,7 +81,8 @@ class BasestationStandbySwitch(CoordinatorEntity, SwitchEntity):
         super().__init__(coordinator)
         self._device = device
         self._attr_unique_id = f"basestation_{device.mac}_standby"
-        self._attr_name = f"{device.device_name} Standby Mode"
+        self._attr_has_entity_name = True
+        self._attr_name = "Standby Mode"
         self._attr_icon = "mdi:sleep"
         self._attr_device_info = {"identifiers": {(DOMAIN, device.mac)}}
 

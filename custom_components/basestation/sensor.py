@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import STATE_UNKNOWN
+from homeassistant.const import STATE_UNKNOWN, EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -54,12 +54,36 @@ async def async_setup_entry(
         entities.extend(
             [
                 BasestationInfoSensor(
-                    device, "firmware", "Firmware", "mdi:developer-board", device_config["info_scan_interval"]
+                    device,
+                    "firmware",
+                    "Firmware",
+                    "mdi:developer-board",
+                    device_config["info_scan_interval"],
+                    EntityCategory.DIAGNOSTIC,
                 ),
-                BasestationInfoSensor(device, "model", "Model", "mdi:card-text", device_config["info_scan_interval"]),
-                BasestationInfoSensor(device, "hardware", "Hardware", "mdi:chip", device_config["info_scan_interval"]),
                 BasestationInfoSensor(
-                    device, "manufacturer", "Manufacturer", "mdi:factory", device_config["info_scan_interval"]
+                    device,
+                    "model",
+                    "Model",
+                    "mdi:card-text",
+                    device_config["info_scan_interval"],
+                    EntityCategory.DIAGNOSTIC,
+                ),
+                BasestationInfoSensor(
+                    device,
+                    "hardware",
+                    "Hardware",
+                    "mdi:chip",
+                    device_config["info_scan_interval"],
+                    EntityCategory.DIAGNOSTIC,
+                ),
+                BasestationInfoSensor(
+                    device,
+                    "manufacturer",
+                    "Manufacturer",
+                    "mdi:factory",
+                    device_config["info_scan_interval"],
+                    EntityCategory.DIAGNOSTIC,
                 ),
             ]
         )
@@ -73,7 +97,12 @@ async def async_setup_entry(
         elif isinstance(device, ViveBasestationDevice) and device.pair_id:
             entities.append(
                 BasestationInfoSensor(
-                    device, "pair_id", "Pair ID", "mdi:key-variant", device_config["info_scan_interval"]
+                    device,
+                    "pair_id",
+                    "Pair ID",
+                    "mdi:key-variant",
+                    device_config["info_scan_interval"],
+                    EntityCategory.DIAGNOSTIC,
                 )
             )
 
@@ -110,14 +139,17 @@ class BasestationInfoSensor(SensorEntity):
         name_suffix: str,
         icon: str,
         scan_interval: int,
+        entity_category: EntityCategory | None = None,
     ) -> None:
         """Initialize the info sensor."""
         self._device = device
         self._key = key
         self._scan_interval = scan_interval
         self._attr_unique_id = f"basestation_{device.mac}_{key}"
-        self._attr_name = f"{device.device_name} {name_suffix}"
+        self._attr_has_entity_name = True
+        self._attr_name = name_suffix
         self._attr_icon = icon
+        self._attr_entity_category = entity_category
         self._attr_native_value = device.get_info(key, STATE_UNKNOWN)
         self._last_update = 0.0
         self._attr_device_info = {"identifiers": {(DOMAIN, device.mac)}}
@@ -144,7 +176,8 @@ class BasestationPowerStateSensor(CoordinatorEntity, SensorEntity):
         super().__init__(coordinator)
         self._device = device
         self._attr_unique_id = f"basestation_{device.mac}_power_state"
-        self._attr_name = f"{device.device_name} Power State"
+        self._attr_has_entity_name = True
+        self._attr_name = "Power State"
         self._attr_icon = "mdi:power-settings"
         self._attr_device_info = {"identifiers": {(DOMAIN, device.mac)}}
 
