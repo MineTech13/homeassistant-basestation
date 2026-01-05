@@ -27,6 +27,15 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
+SENSOR_DESCRIPTIONS: dict[str, tuple[str, str]] = {
+    "firmware": ("Firmware", "mdi:developer-board"),
+    "model": ("Model", "mdi:card-text"),
+    "hardware": ("Hardware", "mdi:chip"),
+    "manufacturer": ("Manufacturer", "mdi:factory"),
+    "channel": ("Channel", "mdi:radio-tower"),
+    "pair_id": ("Pair ID", "mdi:key-variant"),
+}
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -34,7 +43,9 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the basestation sensors."""
-    data = hass.data[DOMAIN][entry.entry_id]
+    data = hass.data[DOMAIN].get(entry.entry_id)
+    if data is None:
+        return
     device: BasestationDevice = data["device"]
     coordinator: BasestationCoordinator = data["coordinator"]
 
@@ -56,32 +67,24 @@ async def async_setup_entry(
                 BasestationInfoSensor(
                     device,
                     "firmware",
-                    "Firmware",
-                    "mdi:developer-board",
                     device_config["info_scan_interval"],
                     EntityCategory.DIAGNOSTIC,
                 ),
                 BasestationInfoSensor(
                     device,
                     "model",
-                    "Model",
-                    "mdi:card-text",
                     device_config["info_scan_interval"],
                     EntityCategory.DIAGNOSTIC,
                 ),
                 BasestationInfoSensor(
                     device,
                     "hardware",
-                    "Hardware",
-                    "mdi:chip",
                     device_config["info_scan_interval"],
                     EntityCategory.DIAGNOSTIC,
                 ),
                 BasestationInfoSensor(
                     device,
                     "manufacturer",
-                    "Manufacturer",
-                    "mdi:factory",
                     device_config["info_scan_interval"],
                     EntityCategory.DIAGNOSTIC,
                 ),
@@ -89,18 +92,12 @@ async def async_setup_entry(
         )
 
         if isinstance(device, ValveBasestationDevice):
-            entities.append(
-                BasestationInfoSensor(
-                    device, "channel", "Channel", "mdi:radio-tower", device_config["info_scan_interval"]
-                )
-            )
+            entities.append(BasestationInfoSensor(device, "channel", device_config["info_scan_interval"]))
         elif isinstance(device, ViveBasestationDevice) and device.pair_id:
             entities.append(
                 BasestationInfoSensor(
                     device,
                     "pair_id",
-                    "Pair ID",
-                    "mdi:key-variant",
                     device_config["info_scan_interval"],
                     EntityCategory.DIAGNOSTIC,
                 )
@@ -136,8 +133,6 @@ class BasestationInfoSensor(SensorEntity):
         self,
         device: BasestationDevice,
         key: "BaseStationDeviceInfoKey",
-        name_suffix: str,
-        icon: str,
         scan_interval: int,
         entity_category: EntityCategory | None = None,
     ) -> None:
@@ -147,7 +142,8 @@ class BasestationInfoSensor(SensorEntity):
         self._scan_interval = scan_interval
         self._attr_unique_id = f"basestation_{device.mac}_{key}"
         self._attr_has_entity_name = True
-        self._attr_name = name_suffix
+        name, icon = SENSOR_DESCRIPTIONS.get(key, (key.capitalize(), "mdi:information"))
+        self._attr_name = name
         self._attr_icon = icon
         self._attr_entity_category = entity_category
         self._attr_native_value = device.get_info(key, STATE_UNKNOWN)

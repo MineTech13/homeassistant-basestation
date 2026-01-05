@@ -71,18 +71,6 @@ class BLEOperationWrite:
     without_response: bool = False
 
 
-@dataclass
-class DeviceConfig:
-    """Configuration for creating a basestation device."""
-
-    hass: HomeAssistant
-    mac: str
-    name: str | None = None
-    device_type: Literal["valve", "vive"] | None = None
-    pair_id: int | None = None
-    connection_timeout: int = DEFAULT_CONNECTION_TIMEOUT
-
-
 class BasestationDevice(ABC):
     """Base class for basestation devices."""
 

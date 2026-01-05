@@ -21,7 +21,9 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the basestation button."""
-    data = hass.data[DOMAIN][entry.entry_id]
+    data = hass.data[DOMAIN].get(entry.entry_id)
+    if data is None:
+        return
     device: BasestationDevice = data["device"]
     coordinator: BasestationCoordinator = data["coordinator"]
 
