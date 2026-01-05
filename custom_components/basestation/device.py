@@ -234,7 +234,6 @@ class BasestationDevice(ABC):
                         disconnected_callback=self._handle_disconnect,
                         max_attempts=1,
                         use_services_cache=True,
-                        ble_device_callback=lambda: self.get_ble_device(),
                     )
 
                     async with client:
@@ -310,7 +309,6 @@ class BasestationDevice(ABC):
                 disconnected_callback=self._handle_disconnect,
                 max_attempts=1,
                 use_services_cache=True,
-                ble_device_callback=lambda: self.get_ble_device(),
             )
 
             async with client:
