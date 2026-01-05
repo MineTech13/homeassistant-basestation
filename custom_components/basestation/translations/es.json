@@ -1,0 +1,105 @@
+{
+  "config": {
+    "step": {
+      "bluetooth_confirm": {
+        "title": "Estación base VR descubierta",
+        "description": "Se descubrió una {device_type}:\n\n**{name}**\nMAC: {mac}\n\n¿Desea agregar esta estación base a Home Assistant?",
+        "data": {
+          "name": "Nombre personalizado (Opcional)"
+        }
+      },
+      "manual": {
+        "title": "Agregar estación base VR",
+        "description": "Ingrese la dirección MAC y seleccione el tipo de su estación base. Puede encontrar la dirección MAC utilizando herramientas de escaneo Bluetooth o verificar su software VR.",
+        "data": {
+          "mac": "Dirección MAC",
+          "name": "Nombre personalizado (Opcional)",
+          "device_type": "Tipo de dispositivo"
+        }
+      },
+      "pair_id": {
+        "title": "ID de emparejamiento Vive Basestation",
+        "description": "Ingrese el ID de emparejamiento para su estación base Vive \"{device_name}\". Esto es necesario para controlar las estaciones base V1. El ID de emparejamiento suele ser un valor hexadecimal como '1A2B3C4D'.",
+        "data": {
+          "pair_id": "ID de emparejamiento (hexadecimal)"
+        }
+      }
+    },
+    "error": {
+      "invalid_mac": "Formato de dirección MAC no válido. Utilice un formato como AA:BB:CC:DD:EE:FF",
+      "invalid_pair_id": "Formato de ID de emparejamiento no válido. Ingrese un valor hexadecimal válido (ej. 1A2B3C4D)",
+      "invalid_data": "Datos proporcionados no válidos",
+      "unknown": "Ocurrió un error inesperado"
+    },
+    "abort": {
+      "already_configured": "Esta estación base ya está configurada",
+      "no_devices_found": "No se encontraron dispositivos de estación base VR"
+    }
+  },
+  "options": {
+    "step": {
+      "device_options": {
+        "title": "Configurar {device_name}",
+        "description": "Configure los ajustes para su {device_type}. Ajuste los intervalos de escaneo, los tiempos de espera y habilite/deshabilite sensores específicos.",
+        "data": {
+          "name": "Nombre del dispositivo",
+          "info_scan_interval": "Intervalo de escaneo de info (segundos)",
+          "power_state_scan_interval": "Intervalo de actualización de estado (segundos)",
+          "connection_timeout": "Tiempo de espera de conexión Bluetooth (segundos)",
+          "enable_info_sensors": "Habilitar sensores de información"
+        },
+        "data_description": {
+          "name": "Nombre personalizado para este dispositivo de estación base",
+          "info_scan_interval": "Con qué frecuencia leer la información del dispositivo como firmware y modelo (mínimo 300 segundos)",
+          "power_state_scan_interval": "Con qué frecuencia actualizar el estado del dispositivo: controla interruptores, botones y sensores (mínimo 1 segundo, solo estaciones base Valve)",
+          "connection_timeout": "Tiempo máximo de espera para conexiones Bluetooth (mínimo 5 segundos)",
+          "enable_info_sensors": "Mostrar sensores para firmware, modelo, hardware e información del fabricante"
+        }
+      }
+    },
+    "error": {
+      "scan_interval_too_low": "El intervalo de escaneo es demasiado bajo. Verifique los valores mínimos.",
+      "timeout_too_low": "El tiempo de espera de conexión es demasiado bajo. El mínimo es 5 segundos.",
+      "invalid_data": "Datos de configuración no válidos proporcionados",
+      "unknown": "Ocurrió un error inesperado al guardar las opciones"
+    }
+  },
+  "entity": {
+    "button": {
+      "identify": {
+        "name": "Identificar"
+      }
+    },
+    "sensor": {
+      "firmware": {
+        "name": "Versión de firmware"
+      },
+      "model": {
+        "name": "Número de modelo"
+      },
+      "hardware": {
+        "name": "Versión de hardware"
+      },
+      "manufacturer": {
+        "name": "Fabricante"
+      },
+      "channel": {
+        "name": "Canal"
+      },
+      "pair_id": {
+        "name": "ID de emparejamiento"
+      },
+      "power_state": {
+        "name": "Estado de energía"
+      }
+    },
+    "switch": {
+      "power": {
+        "name": "Energía"
+      },
+      "standby": {
+        "name": "Modo de espera"
+      }
+    }
+  }
+}
