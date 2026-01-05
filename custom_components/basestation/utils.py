@@ -14,6 +14,7 @@ from .const import (
     CONF_INFO_SCAN_INTERVAL,
     CONF_PAIR_ID,
     CONF_POWER_STATE_SCAN_INTERVAL,
+    CONF_SETUP_METHOD,
     DEFAULT_CONNECTION_TIMEOUT,
     DEFAULT_ENABLE_INFO_SENSORS,
     DEFAULT_INFO_SCAN_INTERVAL,
@@ -45,7 +46,7 @@ def get_basic_device_config(entry: ConfigEntry) -> dict[str, Any] | None:
     name = entry.data.get(CONF_NAME)
     device_type = entry.data.get(CONF_DEVICE_TYPE)
     pair_id = entry.data.get(CONF_PAIR_ID)
-    setup_method = entry.data.get("setup_method", "unknown")
+    setup_method = entry.data.get(CONF_SETUP_METHOD, "unknown")
 
     # Check for required MAC address
     if not mac:

@@ -58,7 +58,7 @@ async def async_setup_entry(
     if device_config["enable_info_sensors"]:
         await _perform_initial_device_info_read(device)
 
-    entities = []
+    entities: list[SensorEntity] = []
 
     # Info Sensors (Static, slow polling)
     if device_config["enable_info_sensors"]:
@@ -138,7 +138,7 @@ class BasestationInfoSensor(SensorEntity):
     ) -> None:
         """Initialize the info sensor."""
         self._device = device
-        self._key = key
+        self._key: BaseStationDeviceInfoKey = key
         self._scan_interval = scan_interval
         self._attr_unique_id = f"basestation_{device.mac}_{key}"
         self._attr_has_entity_name = True

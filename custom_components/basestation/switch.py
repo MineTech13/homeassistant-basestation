@@ -28,7 +28,7 @@ async def async_setup_entry(
     device: BasestationDevice = data["device"]
     coordinator: BasestationCoordinator = data["coordinator"]
 
-    entities = [BasestationSwitch(coordinator, device)]
+    entities: list[SwitchEntity] = [BasestationSwitch(coordinator, device)]
 
     if isinstance(device, ValveBasestationDevice):
         entities.append(BasestationStandbySwitch(coordinator, device))

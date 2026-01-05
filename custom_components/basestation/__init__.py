@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from homeassistant.const import CONF_MAC, CONF_NAME, Platform
 
 from .const import (
     CONF_DEVICE_TYPE,
+    CONF_PAIR_ID,
     CONF_POWER_STATE_SCAN_INTERVAL,
     DEFAULT_POWER_STATE_SCAN_INTERVAL,
     DOMAIN,
@@ -31,9 +32,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})
 
     mac = entry.data.get(CONF_MAC)
-    name = entry.data.get(CONF_NAME)
-    device_type = entry.data.get(CONF_DEVICE_TYPE)
-    pair_id = entry.data.get("pair_id")
+    name = cast("str|None", entry.data.get(CONF_NAME))
+    device_type = cast("str", entry.data.get(CONF_DEVICE_TYPE))
+    pair_id = entry.data.get(CONF_PAIR_ID)
 
     # Get scan interval from options or defaults
     scan_interval = entry.options.get(CONF_POWER_STATE_SCAN_INTERVAL, DEFAULT_POWER_STATE_SCAN_INTERVAL)

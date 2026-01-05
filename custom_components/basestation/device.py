@@ -511,11 +511,15 @@ class ViveBasestationDevice(BasestationDevice):
         return False
 
 
-def get_basestation_device(hass: HomeAssistant, mac: str, /, **kwargs: Any) -> BasestationDevice:
+def get_basestation_device(
+    hass: HomeAssistant,
+    mac: str,
+    device_type: str,
+    name: str | None = None,
+    pair_id: int | None = None,
+    **kwargs: Any,
+) -> BasestationDevice:
     """Create the appropriate device based on the device info."""
-    name = kwargs.get("name")
-    device_type = kwargs.get("device_type")
-    pair_id = kwargs.get("pair_id")
     connection_timeout = kwargs.get("connection_timeout", DEFAULT_CONNECTION_TIMEOUT)
 
     if device_type == DEVICE_TYPE_V2 or (name and name.startswith(V2_NAME_PREFIX)):
