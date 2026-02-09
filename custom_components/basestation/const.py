@@ -55,14 +55,14 @@ V2_STATE_DESCRIPTIONS = {
 
 # Default scan intervals (in seconds)
 DEFAULT_INFO_SCAN_INTERVAL = 1800  # 30 minutes - for static info sensors
-DEFAULT_POWER_STATE_SCAN_INTERVAL = 5  # 5 seconds - for power state sensor (controls ALL state freshness)
+DEFAULT_POWER_STATE_SCAN_INTERVAL = 60  # 60 seconds - for power state sensor (controls ALL state freshness)
 DEFAULT_CONNECTION_TIMEOUT = 10  # 10 seconds - BLE connection timeout
 
 # Default sensor enablement
 DEFAULT_ENABLE_INFO_SENSORS = True  # Enable device info sensors by default
 
 # Initial device info setup retries
-INITIAL_RETRY_DELAY = 2  # seconds
+INITIAL_RETRY_DELAY = 10  # seconds
 MAX_INITIAL_RETRIES = 3  # number of retries
 
 # Number of failures allowed before operation is considered unsuccessful
