@@ -15,20 +15,16 @@ from .const import (
     CONF_CONNECTION_TIMEOUT,
     CONF_DEVICE_TYPE,
     CONF_ENABLE_INFO_SENSORS,
-    CONF_ENABLE_POWER_STATE_SENSOR,
     CONF_INFO_SCAN_INTERVAL,
     CONF_PAIR_ID,
     CONF_POWER_STATE_SCAN_INTERVAL,
     CONF_SETUP_METHOD,
-    CONF_STANDBY_SCAN_INTERVAL,
     DEFAULT_CONNECTION_TIMEOUT,
     DEFAULT_INFO_SCAN_INTERVAL,
     DEFAULT_POWER_STATE_SCAN_INTERVAL,
-    DEFAULT_STANDBY_SCAN_INTERVAL,
     DEVICE_TYPE_V1,
     DEVICE_TYPE_V2,
     DOMAIN,
-    SETUP_IMPORT,
     SETUP_MANUAL,
     V1_NAME_PREFIX,
     V2_NAME_PREFIX,
@@ -155,48 +151,6 @@ class BasestationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_NAME: user_provided_name,
                 CONF_DEVICE_TYPE: device_type,
                 CONF_SETUP_METHOD: "bluetooth_discovery",
-            },
-        )
-
-    async def async_step_import(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        """Import a config entry from configuration.yaml."""
-        if not user_input:
-            return self.async_abort(reason="invalid_data")
-
-        mac = user_input.get(CONF_MAC)
-        name = user_input.get(CONF_NAME)
-
-        if not mac:
-            return self.async_abort(reason="invalid_mac")
-
-        # Format MAC address consistently
-        mac = mac.upper()
-        mac = mac.replace("-", ":").replace(" ", "")
-
-        # If MAC is in format without colons, add them
-        if ":" not in mac and len(mac) == 12:  # noqa: PLR2004
-            mac = ":".join(mac[i : i + 2] for i in range(0, 12, 2))
-
-        # Use MAC address as the unique ID
-        await self.async_set_unique_id(mac)
-        self._abort_if_unique_id_configured()
-
-        # Create the title and name for the entry
-        if name:
-            title = name
-        else:
-            short_id = mac[-5:]
-            title = f"Basestation {short_id}"
-            name = title
-
-        _LOGGER.info("Importing basestation configuration from YAML: %s (%s)", name, mac)
-
-        return self.async_create_entry(
-            title=title,
-            data={
-                CONF_MAC: mac,
-                CONF_NAME: name,
-                CONF_SETUP_METHOD: SETUP_IMPORT,  # Mark as imported
             },
         )
 
@@ -382,9 +336,6 @@ class BasestationOptionsFlow(config_entries.OptionsFlow):
             if user_input.get(CONF_POWER_STATE_SCAN_INTERVAL, 0) < MIN_STATE_SCAN_INTERVAL:
                 errors[CONF_POWER_STATE_SCAN_INTERVAL] = "scan_interval_too_low"
 
-            if user_input.get(CONF_STANDBY_SCAN_INTERVAL, 0) < MIN_STATE_SCAN_INTERVAL:
-                errors[CONF_STANDBY_SCAN_INTERVAL] = "scan_interval_too_low"
-
             if user_input.get(CONF_CONNECTION_TIMEOUT, 0) < MIN_CONNECTION_TIMEOUT:
                 errors[CONF_CONNECTION_TIMEOUT] = "timeout_too_low"
 
@@ -424,18 +375,8 @@ class BasestationOptionsFlow(config_entries.OptionsFlow):
                     vol.Optional(
                         CONF_POWER_STATE_SCAN_INTERVAL,
                         default=current_options.get(CONF_POWER_STATE_SCAN_INTERVAL, DEFAULT_POWER_STATE_SCAN_INTERVAL),
-                        description="How often to check power state (seconds, minimum 1)",
+                        description="How often to update device state (seconds, minimum 1)",
                     ): vol.All(vol.Coerce(int), vol.Range(min=1, max=300)),
-                    vol.Optional(
-                        CONF_STANDBY_SCAN_INTERVAL,
-                        default=current_options.get(CONF_STANDBY_SCAN_INTERVAL, DEFAULT_STANDBY_SCAN_INTERVAL),
-                        description="How often to check standby state (seconds, minimum 1)",
-                    ): vol.All(vol.Coerce(int), vol.Range(min=1, max=300)),
-                    vol.Optional(
-                        CONF_ENABLE_POWER_STATE_SENSOR,
-                        default=current_options.get(CONF_ENABLE_POWER_STATE_SENSOR, True),
-                        description="Enable power state sensor",
-                    ): bool,
                 }
             )
 

@@ -3,20 +3,19 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
-import voluptuous as vol
-from homeassistant.const import (
-    CONF_MAC,
-    CONF_NAME,
-    Platform,
-)
-from homeassistant.helpers import config_validation as cv
+from homeassistant.const import CONF_MAC, CONF_NAME, Platform
 
 from .const import (
     CONF_DEVICE_TYPE,
+    CONF_PAIR_ID,
+    CONF_POWER_STATE_SCAN_INTERVAL,
+    DEFAULT_POWER_STATE_SCAN_INTERVAL,
     DOMAIN,
 )
+from .coordinator import BasestationCoordinator
+from .device import BasestationDevice, get_basestation_device
 from .services import async_setup_services
 
 if TYPE_CHECKING:
@@ -25,101 +24,66 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
-# Define supported platforms
 PLATFORMS = [Platform.SWITCH, Platform.BUTTON, Platform.SENSOR]
-
-# Define validation for a single basestation entry in YAML configuration
-BASESTATION_SCHEMA = vol.Schema(
-    {
-        vol.Required(CONF_MAC): cv.string,
-        vol.Optional(CONF_NAME): cv.string,
-        vol.Optional(CONF_DEVICE_TYPE): cv.string,
-    },
-)
-
-# Define a schema that allows for both config entries and legacy YAML config
-CONFIG_SCHEMA = vol.Schema(
-    {
-        DOMAIN: cv.schema_with_slug_keys(BASESTATION_SCHEMA),
-    },
-    extra=vol.ALLOW_EXTRA,
-)
-
-
-async def async_setup(hass: HomeAssistant, config: dict) -> bool:
-    """Set up the VR Basestation component."""
-    # Initialize the domain data storage
-    hass.data.setdefault(DOMAIN, {})
-
-    # Handle legacy YAML configuration if present
-    if DOMAIN in config:
-        yaml_devices = config[DOMAIN]
-        _LOGGER.info(
-            "Found %s basestation(s) configured in YAML. "
-            "The integration will automatically migrate these to config entries.",
-            len(yaml_devices),
-        )
-
-        # Log details about found devices for debugging
-        for device_key, device_config in yaml_devices.items():
-            mac = device_config.get(CONF_MAC, "unknown")
-            name = device_config.get(CONF_NAME, device_key)
-            _LOGGER.debug("Found YAML device: %s (MAC: %s, Key: %s)", name, mac, device_key)
-
-        # Create a notification to inform the user about the migration process
-        notification_data = {
-            "message": (
-                f"Found {len(yaml_devices)} VR Basestation(s) in your YAML configuration.\n\n"
-                f"The integration is automatically migrating these devices to the new UI-based "
-                f"configuration system. Each device will be created as a separate integration entry.\n\n"
-                f"Once migration is complete, you can remove the basestation entries from "
-                f"your configuration.yaml file.\n\n"
-                f"Check Settings → Devices & Services for your migrated devices."
-            ),
-            "title": "VR Basestation: YAML Migration in Progress",
-            "notification_id": "basestation_yaml_migration_notice",
-        }
-
-        # Create the notification
-        hass.services.call("persistent_notification", "create", notification_data)
-
-    _LOGGER.info("VR Basestation integration setup complete. Bluetooth discovery is now active.")
-    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up VR Basestation from a config entry."""
-    # Ensure domain data exists
     hass.data.setdefault(DOMAIN, {})
 
-    # Store entry data for this device
-    hass.data[DOMAIN][entry.entry_id] = entry.data
+    mac = entry.data.get(CONF_MAC)
+    name = cast("str|None", entry.data.get(CONF_NAME))
+    device_type = cast("str", entry.data.get(CONF_DEVICE_TYPE))
+    pair_id = entry.data.get(CONF_PAIR_ID)
 
-    # Set up entities for this entry across all platforms
+    # Get scan interval from options or defaults
+    scan_interval = entry.options.get(CONF_POWER_STATE_SCAN_INTERVAL, DEFAULT_POWER_STATE_SCAN_INTERVAL)
+
+    if mac:
+        device = get_basestation_device(
+            hass,
+            mac,
+            name=name,
+            device_type=device_type,
+            pair_id=pair_id,
+        )
+
+        # Setup Coordinator
+        coordinator = BasestationCoordinator(hass, device, scan_interval)
+
+        # Initial refresh
+        await coordinator.async_config_entry_first_refresh()
+
+        # Store device and coordinator
+        hass.data[DOMAIN][entry.entry_id] = {"device": device, "coordinator": coordinator}
+
+    # Register update listener
+    entry.async_on_unload(entry.add_update_listener(async_update_options))
+
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-
-    # Set up services (only needs to be done once, but calling multiple times is safe)
     await async_setup_services(hass)
-
-    _LOGGER.info(
-        "Successfully set up VR Basestation device: %s (%s)",
-        entry.title,
-        entry.data.get(CONF_MAC, "unknown"),
-    )
 
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    _LOGGER.debug("Unloading VR Basestation config entry: %s", entry.title)
+    # Get device for cleanup
+    data = hass.data[DOMAIN].get(entry.entry_id)
+    device = data.get("device") if data else None
 
-    # Unload entities for this config entry across all platforms
+    if device and isinstance(device, BasestationDevice):
+        try:
+            await device.cleanup()
+        except Exception as e:
+            _LOGGER.warning("Error cleaning up device resources: %s", e)
+
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
-        # Remove stored entry data
         hass.data[DOMAIN].pop(entry.entry_id, None)
-        _LOGGER.info("Successfully unloaded VR Basestation device: %s", entry.title)
-    else:
-        _LOGGER.error("Failed to unload VR Basestation config entry: %s", entry.title)
 
     return unload_ok
+
+
+async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Update options."""
+    await hass.config_entries.async_reload(entry.entry_id)

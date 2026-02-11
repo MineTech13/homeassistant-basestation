@@ -1,0 +1,105 @@
+{
+  "config": {
+    "step": {
+      "bluetooth_confirm": {
+        "title": "VR Basestation entdeckt",
+        "description": "Eine {device_type} wurde entdeckt:\n\n**{name}**\nMAC: {mac}\n\nMöchten Sie diese Basestation zu Home Assistant hinzufügen?",
+        "data": {
+          "name": "Benutzerdefinierter Name (Optional)"
+        }
+      },
+      "manual": {
+        "title": "VR Basestation hinzufügen",
+        "description": "Geben Sie die MAC-Adresse ein und wählen Sie den Typ Ihrer Basestation. Sie finden die MAC-Adresse mit Bluetooth-Scan-Tools oder in Ihrer VR-Software.",
+        "data": {
+          "mac": "MAC-Adresse",
+          "name": "Benutzerdefinierter Name (Optional)",
+          "device_type": "Gerätetyp"
+        }
+      },
+      "pair_id": {
+        "title": "Vive Basestation Pair-ID",
+        "description": "Geben Sie die Pair-ID für Ihre Vive Basestation \"{device_name}\" ein. Dies ist erforderlich, um V1 Basestations zu steuern. Die Pair-ID ist typischerweise ein Hexadezimalwert wie '1A2B3C4D'.",
+        "data": {
+          "pair_id": "Pair-ID (hexadezimal)"
+        }
+      }
+    },
+    "error": {
+      "invalid_mac": "Ungültiges MAC-Adressformat. Bitte verwenden Sie ein Format wie AA:BB:CC:DD:EE:FF",
+      "invalid_pair_id": "Ungültiges Pair-ID-Format. Geben Sie einen gültigen Hexadezimalwert ein (z.B. 1A2B3C4D)",
+      "invalid_data": "Ungültige Daten bereitgestellt",
+      "unknown": "Unerwarteter Fehler aufgetreten"
+    },
+    "abort": {
+      "already_configured": "Diese Basestation ist bereits konfiguriert",
+      "no_devices_found": "Keine VR Basestation Geräte gefunden"
+    }
+  },
+  "options": {
+    "step": {
+      "device_options": {
+        "title": "Konfiguriere {device_name}",
+        "description": "Konfigurieren Sie Einstellungen für Ihre {device_type}. Passen Sie Scan-Intervalle, Timeouts an und aktivieren/deaktivieren Sie spezifische Sensoren.",
+        "data": {
+          "name": "Gerätename",
+          "info_scan_interval": "Geräteinfo Scan-Intervall (Sekunden)",
+          "power_state_scan_interval": "Statusaktualisierungs-Intervall (Sekunden)",
+          "connection_timeout": "Bluetooth Verbindungs-Timeout (Sekunden)",
+          "enable_info_sensors": "Geräteinformations-Sensoren aktivieren"
+        },
+        "data_description": {
+          "name": "Benutzerdefinierter Name für dieses Basestation-Gerät",
+          "info_scan_interval": "Wie oft Geräteinformationen wie Firmware und Modell gelesen werden (Minimum 300 Sekunden)",
+          "power_state_scan_interval": "Wie oft der Gerätestatus aktualisiert wird - steuert Schalter, Tasten und Sensoren (Minimum 1 Sekunde, nur Valve Basestations)",
+          "connection_timeout": "Maximale Wartezeit für Bluetooth-Verbindungen (Minimum 5 Sekunden)",
+          "enable_info_sensors": "Sensoren für Firmware, Modell, Hardware und Herstellerinformationen anzeigen"
+        }
+      }
+    },
+    "error": {
+      "scan_interval_too_low": "Scan-Intervall ist zu niedrig. Überprüfen Sie die Mindestwerte.",
+      "timeout_too_low": "Verbindungs-Timeout ist zu niedrig. Minimum ist 5 Sekunden.",
+      "invalid_data": "Ungültige Konfigurationsdaten bereitgestellt",
+      "unknown": "Ein unerwarteter Fehler ist beim Speichern der Optionen aufgetreten"
+    }
+  },
+  "entity": {
+    "button": {
+      "identify": {
+        "name": "Identifizieren"
+      }
+    },
+    "sensor": {
+      "firmware": {
+        "name": "Firmware-Version"
+      },
+      "model": {
+        "name": "Modellnummer"
+      },
+      "hardware": {
+        "name": "Hardware-Version"
+      },
+      "manufacturer": {
+        "name": "Hersteller"
+      },
+      "channel": {
+        "name": "Kanal"
+      },
+      "pair_id": {
+        "name": "Pair-ID"
+      },
+      "power_state": {
+        "name": "Energiestatus"
+      }
+    },
+    "switch": {
+      "power": {
+        "name": "Strom"
+      },
+      "standby": {
+        "name": "Standby-Modus"
+      }
+    }
+  }
+}

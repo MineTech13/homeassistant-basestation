@@ -1,7 +1,7 @@
 # VR Basestation Integration for Home Assistant
 
 [![GitHub Release](https://img.shields.io/github/v/release/MineTech13/homeassistant-basestation?style=for-the-badge)](https://github.com/MineTech13/homeassistant-basestation/releases)
-[![HACS](https://img.shields.io/badge/HACS-Custom-orange.svg?style=for-the-badge)](https://github.com/hacs/integration)
+[![HACS](https://img.shields.io/badge/HACS-Default-orange.svg?style=for-the-badge)](https://github.com/hacs/integration)
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.2+-blue.svg?style=for-the-badge)](https://home-assistant.io)
 
 A comprehensive Home Assistant integration for managing **Valve Index® Base Stations (V2)** and **HTC Vive Base Stations (V1)** ([UNTESTED](https://github.com/MineTech13/homeassistant-basestation/issues/4)) through Bluetooth Low Energy (BLE). Control power states, monitor device information, and automate your VR setup with ease.
@@ -25,7 +25,6 @@ A comprehensive Home Assistant integration for managing **Valve Index® Base Sta
 - **Config Flow UI** - Complete graphical configuration (no YAML required)
 - **Device Information** - Firmware, model, hardware, and manufacturer details
 - **Multiple Entity Types** - Switches, sensors, and buttons for comprehensive control
-- **YAML Migration** - Automatic upgrade from legacy configurations
 
 ### ⚙️ **Professional Features**
 - **Connection Management** - Advanced BLE connection pooling and retry logic
@@ -36,19 +35,36 @@ A comprehensive Home Assistant integration for managing **Valve Index® Base Sta
 
 ---
 
+## ℹ️ How it Works
+
+This integration communicates directly with your VR base stations using Bluetooth Low Energy (BLE).
+
+- **Direct Connection**: No SteamVR or additional software required. Home Assistant connects directly to the base stations.
+- **State Polling**: The integration periodically polls the base stations to check their power state (Sleep, Standby, On).
+- **Command Queueing**: Commands (like turning on/off) are queued and sent efficiently to minimize connection attempts.
+- **Auto-Discovery**: Uses Home Assistant's Bluetooth integration to automatically detect nearby base stations.
+
+---
+
 ## 🚀 Installation
 
 ### Via HACS (Recommended)
 
+1. **Install HACS** - Ensure HACS is installed and configured.
+2. **Search for Integration** - Go to **HACS** → **Integrations** → **Explore & Download Repositories** and search for **"VR Basestation"**.
+3. **Install** - Click **Download** on the integration card.
+4. **Restart Home Assistant**
+
+### Via HACS (Custom Repository)
+
 [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=MineTech13&repository=homeassistant-basestation&category=integration)
 
-1. **Install HACS** - Ensure [HACS](https://hacs.xyz) is installed and configured
-2. **Add Custom Repository**:
+1. **Add Custom Repository**:
    - Go to **HACS** → **Integrations** → **⋮** (menu) → **Custom repositories**
    - Add: `https://github.com/MineTech13/homeassistant-basestation`
    - Category: **Integration**
-3. **Install Integration** - Find "VR Basestation" and click **Install**
-4. **Restart Home Assistant**
+2. **Install Integration** - Find "VR Basestation" and click **Install**
+3. **Restart Home Assistant**
 
 ### Manual Installation
 
@@ -184,15 +200,6 @@ Create groups for easy control:
 - Increase connection timeout in device options
 - Check Bluetooth adapter range and interference
 - Ensure base stations aren't in use by SteamVR
-
-### Migration from YAML
-
-The integration automatically migrates old YAML configurations:
-
-1. **Backup** your configuration.yaml
-2. **Install** the new integration
-3. **Configure** devices through the UI
-4. **Remove** old YAML entries after successful migration
 
 ---
 
