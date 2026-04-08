@@ -10,6 +10,7 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.const import CONF_MAC, CONF_NAME
 from homeassistant.core import callback
+from homeassistant.helpers.device_registry import format_mac
 
 from .const import (
     CONF_CONNECTION_TIMEOUT,
@@ -36,8 +37,6 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
-# MAC address regex pattern (allows formats like XX:XX:XX:XX:XX:XX or XXXXXXXXXXXX)
-MAC_REGEX = r"^([0-9A-Fa-f]{2}[:-]?){5}([0-9A-Fa-f]{2})$"
 # Pair ID regex pattern (hexadecimal value)
 PAIR_ID_REGEX = r"^(0x)?[0-9A-Fa-f]{1,8}$"
 
@@ -178,24 +177,18 @@ class BasestationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
 
         # Process the submitted form data
-        mac = user_input[CONF_MAC].upper()
-        mac = mac.replace("-", ":").replace(" ", "")
-
-        # If MAC is in format without colons, add them
-        if ":" not in mac and len(mac) == 12:  # noqa: PLR2004
-            mac = ":".join(mac[i : i + 2] for i in range(0, 12, 2))
-
+        formatted_mac = format_mac(user_input[CONF_MAC])
         user_provided_name = user_input.get(CONF_NAME)
         device_type = user_input[CONF_DEVICE_TYPE]
 
         # Validate MAC address format
-        if not _validate_mac(mac):
+        if not formatted_mac:
             errors["base"] = "invalid_mac"
             return self.async_show_form(
                 step_id="manual",
                 data_schema=vol.Schema(
                     {
-                        vol.Required(CONF_MAC, default=mac): str,
+                        vol.Required(CONF_MAC, default=user_input[CONF_MAC]): str,
                         vol.Optional(CONF_NAME, default=user_provided_name): str,
                         vol.Required(CONF_DEVICE_TYPE, default=device_type): vol.In(
                             {
@@ -207,6 +200,8 @@ class BasestationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 ),
                 errors=errors,
             )
+
+        mac = formatted_mac.upper()
 
         # Use MAC address as the unique ID to prevent duplicates
         await self.async_set_unique_id(mac)
@@ -389,8 +384,3 @@ class BasestationOptionsFlow(config_entries.OptionsFlow):
                 "device_type": "Valve Basestation (V2)" if device_type == DEVICE_TYPE_V2 else "Vive Basestation (V1)",
             },
         )
-
-
-def _validate_mac(mac: str) -> bool:
-    """Validate MAC address format using regex."""
-    return bool(re.match(MAC_REGEX, mac))
