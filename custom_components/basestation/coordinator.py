@@ -44,9 +44,11 @@ class BasestationCoordinator(DataUpdateCoordinator):
             async with asyncio.timeout(10.0):
                 await self.device.update()
         except TimeoutError as err:
-            raise UpdateFailed(f"Timeout communicating with basestation {self.device.mac}") from err
+            msg = f"Timeout communicating with basestation {self.device.mac}"
+            raise UpdateFailed(msg) from err
         except Exception as err:
-            raise UpdateFailed(f"Error communicating with basestation: {err}") from err
+            msg = f"Error communicating with basestation: {err}"
+            raise UpdateFailed(msg) from err
         else:
             return {
                 "is_on": self.device.is_on,

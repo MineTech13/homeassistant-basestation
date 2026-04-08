@@ -28,6 +28,7 @@ ignore = [
     "D400",   # missing-trailing-period
     "D415",   # missing-terminal-punctuation
     "DOC201", # docstyle-missing-returns
+    "EXE002", # Files dont need to be executeable individually
 ]
 
 [tool.ruff.lint.flake8-import-conventions]
