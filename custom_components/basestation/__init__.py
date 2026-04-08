@@ -16,7 +16,6 @@ from .const import (
 )
 from .coordinator import BasestationCoordinator
 from .device import BasestationDevice, get_basestation_device
-from .services import async_setup_services
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -61,7 +60,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     entry.async_on_unload(entry.add_update_listener(async_update_options))
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    await async_setup_services(hass)
 
     return True
 
