@@ -158,17 +158,24 @@ class BasestationDevice(ABC):
 
     async def cleanup(self) -> None:
         """Clean up resources when device is being removed."""
+        client_to_disconnect = None
+
+        # Lock nur kurz halten, um die Referenz sicher zu übertragen
         async with self._client_lock:
             if self._current_client and self._current_client.is_connected:
-                try:
-                    await self._current_client.disconnect()
-                except Exception as e:
-                    _LOGGER.debug("Error disconnecting client during cleanup: %s", e)
-                finally:
-                    self._current_client = None
+                client_to_disconnect = self._current_client
+            self._current_client = None
 
-        self._is_connecting = False
-        self._available = False
+        # Disconnect außerhalb des Locks mit Timeout ausführen
+        if client_to_disconnect:
+            try:
+                async with asyncio.timeout(5.0):
+                    await client_to_disconnect.disconnect()
+            except (TimeoutError, Exception) as e:
+                _LOGGER.debug("Error disconnecting client during cleanup: %s", e)
+
+    self._is_connecting = False
+    self._available = False
 
     def _should_attempt_connection(self) -> bool:
         current_time = time.time()
