@@ -151,7 +151,7 @@ class BasestationInfoSensor(SensorEntity):
         self._attr_entity_category = entity_category
         self._attr_native_value = device.get_info(key, STATE_UNKNOWN)
         self._last_update = 0.0
-        self._attr_device_info = {"identifiers": {(DOMAIN, device.mac)}}
+        self._attr_device_info = device.device_info
 
     async def async_update(self) -> None:
         """Update the sensor value."""
@@ -178,7 +178,7 @@ class BasestationPowerStateSensor(CoordinatorEntity, SensorEntity):
         self._attr_has_entity_name = True
         self._attr_name = "Power State"
         self._attr_icon = "mdi:power-settings"
-        self._attr_device_info = {"identifiers": {(DOMAIN, device.mac)}}
+        self._attr_device_info = device.device_info
 
     @property
     def native_value(self) -> str:

@@ -13,12 +13,14 @@ from bleak.exc import BleakError
 from bleak_retry_connector import BleakClientWithServiceCache, establish_connection
 from homeassistant.components import bluetooth
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.device_registry import DeviceInfo
 
 from .const import (
     DEFAULT_CONNECTION_TIMEOUT,
     DEFAULT_INFO_SCAN_INTERVAL,
     DEVICE_TYPE_V1,
     DEVICE_TYPE_V2,
+    DOMAIN,
     FIRMWARE_CHARACTERISTIC,
     HARDWARE_CHARACTERISTIC,
     MANUFACTURER_CHARACTERISTIC,
@@ -130,6 +132,19 @@ class BasestationDevice(ABC):
             return False
         age = time.time() - self._last_power_state_update
         return age < STATE_FRESHNESS_THRESHOLD
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return the device info for the registry."""
+        return DeviceInfo(
+            identifiers={(DOMAIN, self.mac)},
+            name=self.device_name,
+            manufacturer="Valve" if self.default_name == "Valve Basestation" else "HTC",
+            model=self.default_name,
+            serial_number=self.mac,
+            sw_version=self.get_info("firmware"),
+            hw_version=self.get_info("hardware"),
+        )
 
     @property
     @abstractmethod

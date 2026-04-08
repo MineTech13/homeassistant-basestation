@@ -47,13 +47,7 @@ class BasestationSwitch(CoordinatorEntity, SwitchEntity):
         self._attr_has_entity_name = True
         self._attr_name = None
         self._attr_icon = "mdi:virtual-reality"
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, device.mac)},
-            "name": device.device_name,
-            "manufacturer": "Valve" if isinstance(device, ValveBasestationDevice) else "HTC",
-            "model": "Index Basestation" if isinstance(device, ValveBasestationDevice) else "Vive Basestation",
-            "serial_number": device.mac,
-        }
+        self._attr_device_info = device.device_info
 
     @property
     def is_on(self) -> bool:
@@ -86,7 +80,7 @@ class BasestationStandbySwitch(CoordinatorEntity, SwitchEntity):
         self._attr_has_entity_name = True
         self._attr_name = "Standby Mode"
         self._attr_icon = "mdi:sleep"
-        self._attr_device_info = {"identifiers": {(DOMAIN, device.mac)}}
+        self._attr_device_info = device.device_info
 
     @property
     def is_on(self) -> bool:
