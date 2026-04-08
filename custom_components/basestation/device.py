@@ -160,13 +160,11 @@ class BasestationDevice(ABC):
         """Clean up resources when device is being removed."""
         client_to_disconnect = None
 
-        # Lock nur kurz halten, um die Referenz sicher zu übertragen
         async with self._client_lock:
             if self._current_client and self._current_client.is_connected:
                 client_to_disconnect = self._current_client
             self._current_client = None
 
-        # Disconnect außerhalb des Locks mit Timeout ausführen
         if client_to_disconnect:
             try:
                 async with asyncio.timeout(5.0):
@@ -174,8 +172,8 @@ class BasestationDevice(ABC):
             except (TimeoutError, Exception) as e:
                 _LOGGER.debug("Error disconnecting client during cleanup: %s", e)
 
-    self._is_connecting = False
-    self._available = False
+        self._is_connecting = False
+        self._available = False
 
     def _should_attempt_connection(self) -> bool:
         current_time = time.time()
@@ -262,8 +260,10 @@ class BasestationDevice(ABC):
 
                 except BleakError as err:
                     _LOGGER.debug("BLE error on %s: %s", self.mac, str(err))
+                except TimeoutError as err:
+                    _LOGGER.debug("Timeout executing BLE op on %s: %s", self.mac, str(err))
                 except Exception as ex:
-                    _LOGGER.debug("Failed to execute op on %s: %s", self.mac, str(ex))
+                    _LOGGER.error("Unexpected error on %s: %s", self.mac, str(ex), exc_info=True)
 
                 if attempt < (MAX_RETRIES if op.retry else 1) - 1:
                     await asyncio.sleep(CONNECTION_DELAY)
@@ -299,14 +299,11 @@ class BasestationDevice(ABC):
                     info[key] = _value.decode("utf-8").strip()
                     any_read_successful = True
             except BleakError as err:
-                _LOGGER.debug("BLE error while trying to read characteristic on %s: %s", self.mac, str(err))
+                _LOGGER.debug("BLE error reading characteristic %s: %s", key, err)
             except TimeoutError as err:
-                _LOGGER.debug("Timeout executing BLE while trying to read characteristic on %s: %s", self.mac, str(err))
-            except Exception as ex:
-                # Unbekannte Ausnahmen als Error protokollieren, um Bugs zu erkennen
-                _LOGGER.error(
-                    "Unexpected error while trying to read characteristic on %s: %s", self.mac, str(ex), exc_info=True
-                )
+                _LOGGER.debug("Timeout reading characteristic %s: %s", key, err)
+            except Exception as err:
+                _LOGGER.error("Unexpected error reading characteristic %s: %s", key, err, exc_info=True)
         return any_read_successful
 
     async def _attempt_device_info_read(self) -> dict[BaseStationDeviceInfoKey, str] | None:
@@ -334,8 +331,12 @@ class BasestationDevice(ABC):
 
                 if std_success or spec_success:
                     return info
+        except BleakError as err:
+            _LOGGER.debug("BLE error reading device info: %s", err)
+        except TimeoutError as err:
+            _LOGGER.debug("Timeout reading device info: %s", err)
         except Exception as err:
-            _LOGGER.debug("Failed to read device info: %s", err)
+            _LOGGER.error("Unexpected error reading device info: %s", err, exc_info=True)
         finally:
             async with self._client_lock:
                 self._is_connecting = False
@@ -454,12 +455,11 @@ class ValveBasestationDevice(BasestationDevice):
                 info["channel"] = int.from_bytes(channel, byteorder="big")
                 return True
         except BleakError as err:
-            _LOGGER.debug("BLE error while read channel on %s: %s", self.mac, str(err))
+            _LOGGER.debug("BLE error reading channel: %s", err)
         except TimeoutError as err:
-            _LOGGER.debug("Timeout executing BLE while read channel on %s: %s", self.mac, str(err))
-        except Exception as ex:
-            # Unbekannte Ausnahmen als Error protokollieren, um Bugs zu erkennen
-            _LOGGER.error("Unexpected error while read channel on %s: %s", self.mac, str(ex), exc_info=True)
+            _LOGGER.debug("Timeout reading channel: %s", err)
+        except Exception as err:
+            _LOGGER.error("Unexpected error reading channel: %s", err, exc_info=True)
         return False
 
 
@@ -492,16 +492,13 @@ class ViveBasestationDevice(BasestationDevice):
         try:
             command = bytearray(20)
             command[0:4] = b"\x12\x00\x00\x00"
-            command[4:8] = struct.pack("<I", self.pair_id)
+            command[4:8] = struct.pack("<I", int(self.pair_id))
             if await self.async_ble_operation(BLEOperationWrite(V1_PWR_CHARACTERISTIC, bytes(command))):
                 self._is_on = True
-        except BleakError as err:
-            _LOGGER.debug("BLE error while turn on V1 basestation on %s: %s", self.mac, str(err))
-        except TimeoutError as err:
-            _LOGGER.debug("Timeout executing BLE while turn on V1 basestation on %s: %s", self.mac, str(err))
-        except Exception as ex:
-            # Unbekannte Ausnahmen als Error protokollieren, um Bugs zu erkennen
-            _LOGGER.error("Unexpected error while turn on V1 basestation on %s: %s", self.mac, str(ex), exc_info=True)
+        except (ValueError, struct.error) as e:
+            _LOGGER.error("Invalid pair_id format for V1 basestation %s: %s", self.mac, e)
+        except Exception as e:
+            _LOGGER.error("Unexpected error turning on V1 basestation: %s", e, exc_info=True)
 
     async def turn_off(self) -> None:
         """Turn off the device."""
@@ -510,23 +507,21 @@ class ViveBasestationDevice(BasestationDevice):
         try:
             command = bytearray(20)
             command[0:4] = b"\x12\x02\x00\x01"
-            command[4:8] = struct.pack("<I", self.pair_id)
+            command[4:8] = struct.pack("<I", int(self.pair_id))
             if await self.async_ble_operation(BLEOperationWrite(V1_PWR_CHARACTERISTIC, bytes(command))):
                 self._is_on = False
-        except BleakError as err:
-            _LOGGER.debug("BLE error while turn off V1 basestation on %s: %s", self.mac, str(err))
-        except TimeoutError as err:
-            _LOGGER.debug("Timeout executing BLE while turn off V1 basestation on %s: %s", self.mac, str(err))
-        except Exception as ex:
-            # Unbekannte Ausnahmen als Error protokollieren, um Bugs zu erkennen
-            _LOGGER.error("Unexpected error while turn off V1 basestation on %s: %s", self.mac, str(ex), exc_info=True)
+        except (ValueError, struct.error) as e:
+            _LOGGER.error("Invalid pair_id format for V1 basestation %s: %s", self.mac, e)
+        except Exception as e:
+            _LOGGER.error("Unexpected error turning off V1 basestation: %s", e, exc_info=True)
 
     async def update(self) -> None:
         """Update the device state."""
         try:
             ble_device = self.get_ble_device()
             self._available = ble_device is not None
-        except Exception:
+        except Exception as e:
+            _LOGGER.error("Error updating V1 basestation availability: %s", e)
             self._available = False
 
     async def _read_specific_info(
