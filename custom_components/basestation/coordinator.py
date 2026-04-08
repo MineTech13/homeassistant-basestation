@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import datetime
 import logging
 from typing import TYPE_CHECKING, Any
@@ -39,11 +40,13 @@ class BasestationCoordinator(DataUpdateCoordinator):
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from the device."""
         try:
-            # Dies führt das eigentliche BLE-Polling durch
-            await self.device.update()
+            # Timeout von 10 Sekunden für das Update festlegen
+            async with asyncio.timeout(10.0):
+                await self.device.update()
+        except TimeoutError as err:
+            raise UpdateFailed(f"Timeout communicating with basestation {self.device.mac}") from err
         except Exception as err:
-            msg = f"Error communicating with basestation: {err}"
-            raise UpdateFailed(msg) from err
+            raise UpdateFailed(f"Error communicating with basestation: {err}") from err
         else:
             return {
                 "is_on": self.device.is_on,
