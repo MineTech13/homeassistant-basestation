@@ -56,7 +56,10 @@ async def async_setup_entry(
 
     # Initial info read
     if device_config["enable_info_sensors"]:
-        await _perform_initial_device_info_read(device)
+        # Task im Hintergrund ausführen, um den Setup-Vorgang nicht zu blockieren
+        entry.async_create_background_task(
+            hass, _perform_initial_device_info_read(device), name=f"basestation_init_{device.mac}"
+        )
 
     entities: list[SensorEntity] = []
 
