@@ -10,13 +10,11 @@ from homeassistant.const import CONF_MAC, CONF_NAME
 from .const import (
     CONF_CONNECTION_TIMEOUT,
     CONF_DEVICE_TYPE,
-    CONF_ENABLE_INFO_SENSORS,
     CONF_INFO_SCAN_INTERVAL,
     CONF_PAIR_ID,
     CONF_POWER_STATE_SCAN_INTERVAL,
     CONF_SETUP_METHOD,
     DEFAULT_CONNECTION_TIMEOUT,
-    DEFAULT_ENABLE_INFO_SENSORS,
     DEFAULT_INFO_SCAN_INTERVAL,
     DEFAULT_POWER_STATE_SCAN_INTERVAL,
 )
@@ -101,24 +99,21 @@ def get_sensor_device_config(entry: ConfigEntry) -> dict[str, Any] | None:
 
     # Get sensor-specific options
     options = entry.options
-    enable_info_sensors = options.get(CONF_ENABLE_INFO_SENSORS, DEFAULT_ENABLE_INFO_SENSORS)
     # Power state sensor is always enabled (critical for optimal performance)
     enable_power_state_sensor = True
     info_scan_interval = options.get(CONF_INFO_SCAN_INTERVAL, DEFAULT_INFO_SCAN_INTERVAL)
     power_state_scan_interval = options.get(CONF_POWER_STATE_SCAN_INTERVAL, DEFAULT_POWER_STATE_SCAN_INTERVAL)
 
     _LOGGER.info(
-        "Setting up sensors for device: %s (%s) - Info sensors: %s, Power state sensor: always enabled (interval: %ds)",
+        "Setting up sensors for device: %s (%s) - Power state sensor: always enabled (interval: %ds)",
         basic_config["name"] or basic_config["mac"],
         basic_config["mac"],
-        enable_info_sensors,
         power_state_scan_interval,
     )
 
     # Combine basic config with sensor-specific options
     return {
         **basic_config,
-        "enable_info_sensors": enable_info_sensors,
         "enable_power_state_sensor": enable_power_state_sensor,
         "info_scan_interval": info_scan_interval,
         "power_state_scan_interval": power_state_scan_interval,
