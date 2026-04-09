@@ -15,7 +15,6 @@ from homeassistant.helpers.device_registry import format_mac
 from .const import (
     CONF_CONNECTION_TIMEOUT,
     CONF_DEVICE_TYPE,
-    CONF_ENABLE_INFO_SENSORS,
     CONF_INFO_SCAN_INTERVAL,
     CONF_PAIR_ID,
     CONF_POWER_STATE_SCAN_INTERVAL,
@@ -341,11 +340,9 @@ class BasestationOptionsFlow(config_entries.OptionsFlow):
         # Get current options or set defaults
         current_options = self._config_entry.options
         device_type = self._config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_V2)
-        current_name = current_options.get(CONF_NAME, self._config_entry.data.get(CONF_NAME, ""))
 
         # Build the schema based on device type
         schema_dict = {
-            vol.Optional(CONF_NAME, default=current_name, description="Custom device name"): str,
             vol.Optional(
                 CONF_INFO_SCAN_INTERVAL,
                 default=current_options.get(CONF_INFO_SCAN_INTERVAL, DEFAULT_INFO_SCAN_INTERVAL),
@@ -356,11 +353,6 @@ class BasestationOptionsFlow(config_entries.OptionsFlow):
                 default=current_options.get(CONF_CONNECTION_TIMEOUT, DEFAULT_CONNECTION_TIMEOUT),
                 description="BLE connection timeout (seconds, minimum 5)",
             ): vol.All(vol.Coerce(int), vol.Range(min=5, max=60)),
-            vol.Optional(
-                CONF_ENABLE_INFO_SENSORS,
-                default=current_options.get(CONF_ENABLE_INFO_SENSORS, True),
-                description="Enable device information sensors (firmware, model, etc.)",
-            ): bool,
         }
 
         # Add V2-specific options
