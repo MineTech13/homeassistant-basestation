@@ -41,7 +41,7 @@ class BasestationCoordinator(DataUpdateCoordinator):
         """Fetch data from the device."""
         try:
             # Timeout von 10 Sekunden für das Update festlegen
-            async with asyncio.timeout(10.0):
+            async with asyncio.timeout(self.device.connection_timeout):
                 await self.device.update()
         except TimeoutError as err:
             msg = f"Timeout communicating with basestation {self.device.mac}"
