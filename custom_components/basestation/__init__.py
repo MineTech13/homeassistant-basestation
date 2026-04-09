@@ -8,9 +8,13 @@ from typing import TYPE_CHECKING, cast
 from homeassistant.const import CONF_MAC, CONF_NAME, Platform
 
 from .const import (
+    CONF_CONNECTION_TIMEOUT,
     CONF_DEVICE_TYPE,
+    CONF_INFO_SCAN_INTERVAL,
     CONF_PAIR_ID,
     CONF_POWER_STATE_SCAN_INTERVAL,
+    DEFAULT_CONNECTION_TIMEOUT,
+    DEFAULT_INFO_SCAN_INTERVAL,
     DEFAULT_POWER_STATE_SCAN_INTERVAL,
     DOMAIN,
 )
@@ -45,6 +49,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             name=name,
             device_type=device_type,
             pair_id=pair_id,
+            connection_timeout=entry.options.get(CONF_CONNECTION_TIMEOUT, DEFAULT_CONNECTION_TIMEOUT),
+            info_scan_interval=entry.options.get(CONF_INFO_SCAN_INTERVAL, DEFAULT_INFO_SCAN_INTERVAL),
         )
 
         # Setup Coordinator
