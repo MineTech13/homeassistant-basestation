@@ -343,12 +343,12 @@ class BasestationOptionsFlow(config_entries.OptionsFlow):
 
         # Build the schema based on device type
         schema_dict = {
-            vol.Optional(
+            vol.Required(
                 CONF_INFO_SCAN_INTERVAL,
                 default=current_options.get(CONF_INFO_SCAN_INTERVAL, DEFAULT_INFO_SCAN_INTERVAL),
                 description="How often to scan for device info (seconds, minimum 300)",
             ): vol.All(vol.Coerce(int), vol.Range(min=300, max=86400)),
-            vol.Optional(
+            vol.Required(
                 CONF_CONNECTION_TIMEOUT,
                 default=current_options.get(CONF_CONNECTION_TIMEOUT, DEFAULT_CONNECTION_TIMEOUT),
                 description="BLE connection timeout (seconds, minimum 5)",
@@ -359,7 +359,7 @@ class BasestationOptionsFlow(config_entries.OptionsFlow):
         if device_type == DEVICE_TYPE_V2:
             schema_dict.update(
                 {
-                    vol.Optional(
+                    vol.Required(
                         CONF_POWER_STATE_SCAN_INTERVAL,
                         default=current_options.get(CONF_POWER_STATE_SCAN_INTERVAL, DEFAULT_POWER_STATE_SCAN_INTERVAL),
                         description="How often to update device state (seconds, minimum 1)",
