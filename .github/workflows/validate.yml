@@ -21,3 +21,21 @@ jobs:
     steps:
         - uses: "actions/checkout@v4"
         - uses: "home-assistant/actions/hassfest@master"
+  lint:
+    name: Lint and Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install dependencies
+        run: |
+          pip install ruff mypy
+          pip install -e .
+      - name: Run Ruff Format Check
+        run: ruff format --check .
+      - name: Run Ruff Linter
+        run: ruff check .
+      - name: Run Mypy
+        run: mypy custom_components/basestation
