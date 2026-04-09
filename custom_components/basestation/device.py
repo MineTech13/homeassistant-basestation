@@ -13,7 +13,7 @@ from bleak.exc import BleakError
 from bleak_retry_connector import BleakClientWithServiceCache, establish_connection
 from homeassistant.components import bluetooth
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.device_registry import CONNECTION_BLUETOOTH, DeviceInfo
 
 from .const import (
     DEFAULT_CONNECTION_TIMEOUT,
@@ -138,6 +138,7 @@ class BasestationDevice(ABC):
         """Return the device info for the registry."""
         return DeviceInfo(
             identifiers={(DOMAIN, self.mac)},
+            connections={(CONNECTION_BLUETOOTH, self.mac)},  # Verknüpft das Gerät fest mit der Bluetooth-MAC
             name=self.device_name,
             manufacturer="Valve" if self.default_name == "Valve Basestation" else "HTC",
             model=self.default_name,
