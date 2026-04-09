@@ -248,14 +248,15 @@ class BasestationDevice(ABC):
                     if not device:
                         continue
 
-                    client = await establish_connection(
-                        BleakClientWithServiceCache,
-                        device,
-                        device.name or device.address,
-                        disconnected_callback=self._handle_disconnect,
-                        max_attempts=1,
-                        use_services_cache=True,
-                    )
+                    async with asyncio.timeout(self.connection_timeout):
+                        client = await establish_connection(
+                            BleakClientWithServiceCache,
+                            device,
+                            device.name or device.address,
+                            disconnected_callback=self._handle_disconnect,
+                            max_attempts=1,
+                            use_services_cache=True,
+                        )
 
                     async with client:
                         async with self._client_lock:
@@ -329,14 +330,15 @@ class BasestationDevice(ABC):
 
         info: dict[BaseStationDeviceInfoKey, str] = {}
         try:
-            client = await establish_connection(
-                BleakClientWithServiceCache,
-                device,
-                device.name or device.address,
-                disconnected_callback=self._handle_disconnect,
-                max_attempts=1,
-                use_services_cache=True,
-            )
+            async with asyncio.timeout(self.connection_timeout):
+                client = await establish_connection(
+                    BleakClientWithServiceCache,
+                    device,
+                    device.name or device.address,
+                    disconnected_callback=self._handle_disconnect,
+                    max_attempts=1,
+                    use_services_cache=True,
+                )
 
             async with client:
                 async with self._client_lock:
