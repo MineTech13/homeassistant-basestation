@@ -54,57 +54,54 @@ async def async_setup_entry(
     if not device_config:
         return
 
-    # Initial info read
-    if device_config["enable_info_sensors"]:
-        # Task im Hintergrund ausführen, um den Setup-Vorgang nicht zu blockieren
-        entry.async_create_background_task(
-            hass, _perform_initial_device_info_read(device), name=f"basestation_init_{device.mac}"
-        )
+    # Initial info read im Hintergrund ausführen, um den Setup-Vorgang nicht zu blockieren
+    entry.async_create_background_task(
+        hass, _perform_initial_device_info_read(device), name=f"basestation_init_{device.mac}"
+    )
 
     entities: list[SensorEntity] = []
 
     # Info Sensors (Static, slow polling)
-    if device_config["enable_info_sensors"]:
-        entities.extend(
-            [
-                BasestationInfoSensor(
-                    device,
-                    "firmware",
-                    device_config["info_scan_interval"],
-                    EntityCategory.DIAGNOSTIC,
-                ),
-                BasestationInfoSensor(
-                    device,
-                    "model",
-                    device_config["info_scan_interval"],
-                    EntityCategory.DIAGNOSTIC,
-                ),
-                BasestationInfoSensor(
-                    device,
-                    "hardware",
-                    device_config["info_scan_interval"],
-                    EntityCategory.DIAGNOSTIC,
-                ),
-                BasestationInfoSensor(
-                    device,
-                    "manufacturer",
-                    device_config["info_scan_interval"],
-                    EntityCategory.DIAGNOSTIC,
-                ),
-            ]
-        )
+    entities.extend(
+        [
+            BasestationInfoSensor(
+                device,
+                "firmware",
+                device_config["info_scan_interval"],
+                EntityCategory.DIAGNOSTIC,
+            ),
+            BasestationInfoSensor(
+                device,
+                "model",
+                device_config["info_scan_interval"],
+                EntityCategory.DIAGNOSTIC,
+            ),
+            BasestationInfoSensor(
+                device,
+                "hardware",
+                device_config["info_scan_interval"],
+                EntityCategory.DIAGNOSTIC,
+            ),
+            BasestationInfoSensor(
+                device,
+                "manufacturer",
+                device_config["info_scan_interval"],
+                EntityCategory.DIAGNOSTIC,
+            ),
+        ]
+    )
 
-        if isinstance(device, ValveBasestationDevice):
-            entities.append(BasestationInfoSensor(device, "channel", device_config["info_scan_interval"]))
-        elif isinstance(device, ViveBasestationDevice) and device.pair_id:
-            entities.append(
-                BasestationInfoSensor(
-                    device,
-                    "pair_id",
-                    device_config["info_scan_interval"],
-                    EntityCategory.DIAGNOSTIC,
-                )
+    if isinstance(device, ValveBasestationDevice):
+        entities.append(BasestationInfoSensor(device, "channel", device_config["info_scan_interval"]))
+    elif isinstance(device, ViveBasestationDevice) and device.pair_id:
+        entities.append(
+            BasestationInfoSensor(
+                device,
+                "pair_id",
+                device_config["info_scan_interval"],
+                EntityCategory.DIAGNOSTIC,
             )
+        )
 
     # Power State Sensor (Fast polling via Coordinator)
     if isinstance(device, ValveBasestationDevice) and device_config["enable_power_state_sensor"]:
