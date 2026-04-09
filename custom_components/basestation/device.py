@@ -82,12 +82,14 @@ class BasestationDevice(ABC):
         mac: str,
         name: str | None = None,
         connection_timeout: int = DEFAULT_CONNECTION_TIMEOUT,
+        info_scan_interval: int = DEFAULT_INFO_SCAN_INTERVAL,
     ) -> None:
         """Initialize the device."""
         self.hass = hass
         self.mac = mac
         self.custom_name = name
         self.connection_timeout = connection_timeout
+        self.info_scan_interval = info_scan_interval
         self._is_on = False
         self._available = False
         self._info: dict[BaseStationDeviceInfoKey, str] = {}
@@ -138,7 +140,7 @@ class BasestationDevice(ABC):
         """Return the device info for the registry."""
         return DeviceInfo(
             identifiers={(DOMAIN, self.mac)},
-            connections={(CONNECTION_BLUETOOTH, self.mac)},  # Verknüpft das Gerät fest mit der Bluetooth-MAC
+            connections={(CONNECTION_BLUETOOTH, self.mac)},
             name=self.device_name,
             manufacturer="Valve" if self.default_name == "Valve Basestation" else "HTC",
             model=self.default_name,
@@ -367,7 +369,7 @@ class BasestationDevice(ABC):
         if (
             not force
             and self._device_info_read_success
-            and (current_time - self._last_device_info_read < DEFAULT_INFO_SCAN_INTERVAL)
+            and (current_time - self._last_device_info_read < self.info_scan_interval)
         ):
             return self._info
 
@@ -412,9 +414,10 @@ class ValveBasestationDevice(BasestationDevice):
         mac: str,
         name: str | None = None,
         connection_timeout: int = DEFAULT_CONNECTION_TIMEOUT,
+        info_scan_interval: int = DEFAULT_INFO_SCAN_INTERVAL,
     ) -> None:
         """Initialize the Valve basestation device."""
-        super().__init__(hass, mac, name, connection_timeout)
+        super().__init__(hass, mac, name, connection_timeout, info_scan_interval)
 
     @property
     def default_name(self) -> str:
@@ -491,9 +494,10 @@ class ViveBasestationDevice(BasestationDevice):
         name: str | None = None,
         pair_id: int | None = None,
         connection_timeout: int = DEFAULT_CONNECTION_TIMEOUT,
+        info_scan_interval: int = DEFAULT_INFO_SCAN_INTERVAL,
     ) -> None:
         """Initialize the Vive basestation device."""
-        super().__init__(hass, mac, name, connection_timeout)
+        super().__init__(hass, mac, name, connection_timeout, info_scan_interval)
         self.pair_id = pair_id
         if pair_id is not None:
             self._info["pair_id"] = f"0x{pair_id:08X}"
@@ -561,13 +565,20 @@ def get_basestation_device(
 ) -> BasestationDevice:
     """Create the appropriate device based on the device info."""
     connection_timeout = kwargs.get("connection_timeout", DEFAULT_CONNECTION_TIMEOUT)
+    info_scan_interval = kwargs.get("info_scan_interval", DEFAULT_INFO_SCAN_INTERVAL)
 
     if device_type == DEVICE_TYPE_V2 or (name and name.startswith(V2_NAME_PREFIX)):
-        return ValveBasestationDevice(hass, mac, name, connection_timeout=connection_timeout)
+        return ValveBasestationDevice(
+            hass, mac, name, connection_timeout=connection_timeout, info_scan_interval=info_scan_interval
+        )
     if device_type == DEVICE_TYPE_V1 or (name and name.startswith(V1_NAME_PREFIX)):
-        return ViveBasestationDevice(hass, mac, name, pair_id, connection_timeout=connection_timeout)
+        return ViveBasestationDevice(
+            hass, mac, name, pair_id, connection_timeout=connection_timeout, info_scan_interval=info_scan_interval
+        )
 
-    return ValveBasestationDevice(hass, mac, name, connection_timeout=connection_timeout)
+    return ValveBasestationDevice(
+        hass, mac, name, connection_timeout=connection_timeout, info_scan_interval=info_scan_interval
+    )
 
 
 async def connect_delay(attempt: int) -> None:
