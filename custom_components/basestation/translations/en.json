@@ -40,20 +40,18 @@
     "step": {
       "device_options": {
         "title": "Configure {device_name}",
-        "description": "Configure settings for your {device_type}. Adjust scan intervals, timeouts, and enable/disable specific sensors.",
+        "description": "Configure settings for your {device_type}. Adjust scan intervals and timeouts.",
         "data": {
           "name": "Device Name",
           "info_scan_interval": "Device Info Scan Interval (seconds)",
           "power_state_scan_interval": "State Update Interval (seconds)",
-          "connection_timeout": "Bluetooth Connection Timeout (seconds)",
-          "enable_info_sensors": "Enable Device Information Sensors"
+          "connection_timeout": "Bluetooth Connection Timeout (seconds)"
         },
         "data_description": {
           "name": "Custom name for this basestation device",
           "info_scan_interval": "How often to read device information like firmware and model (minimum 300 seconds)",
           "power_state_scan_interval": "How often to update device state - controls switches, buttons, and sensor (minimum 1 second, Valve basestations only)",
-          "connection_timeout": "Maximum time to wait for Bluetooth connections (minimum 5 seconds)",
-          "enable_info_sensors": "Show sensors for firmware, model, hardware, and manufacturer information"
+          "connection_timeout": "Maximum time to wait for Bluetooth connections (minimum 5 seconds)"
         }
       }
     },

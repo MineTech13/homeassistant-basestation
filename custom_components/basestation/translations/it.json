@@ -1,0 +1,103 @@
+{
+  "config": {
+    "step": {
+      "bluetooth_confirm": {
+        "title": "Stazione base VR rilevata",
+        "description": "È stata rilevata una {device_type}:\n\n**{name}**\nMAC: {mac}\n\nVuoi aggiungere questa stazione base a Home Assistant?",
+        "data": {
+          "name": "Nome personalizzato (Opzionale)"
+        }
+      },
+      "manual": {
+        "title": "Aggiungi stazione base VR",
+        "description": "Inserisci l'indirizzo MAC e seleziona il tipo della tua stazione base. Puoi trovare l'indirizzo MAC utilizzando strumenti di scansione Bluetooth o controllando il tuo software VR.",
+        "data": {
+          "mac": "Indirizzo MAC",
+          "name": "Nome personalizzato (Opzionale)",
+          "device_type": "Tipo di dispositivo"
+        }
+      },
+      "pair_id": {
+        "title": "ID associazione Vive Basestation",
+        "description": "Inserisci l'ID di associazione per la tua stazione base Vive \"{device_name}\". Questo è necessario per controllare le stazioni base V1. L'ID di associazione è in genere un valore esadecimale come '1A2B3C4D'.",
+        "data": {
+          "pair_id": "ID associazione (esadecimale)"
+        }
+      }
+    },
+    "error": {
+      "invalid_mac": "Formato indirizzo MAC non valido. Usa un formato come AA:BB:CC:DD:EE:FF",
+      "invalid_pair_id": "Formato ID associazione non valido. Inserisci un valore esadecimale valido (es. 1A2B3C4D)",
+      "invalid_data": "Dati forniti non validi",
+      "unknown": "Si è verificato un errore imprevisto"
+    },
+    "abort": {
+      "already_configured": "Questa stazione base è già configurata",
+      "no_devices_found": "Nessun dispositivo stazione base VR trovato"
+    }
+  },
+  "options": {
+    "step": {
+      "device_options": {
+        "title": "Configura {device_name}",
+        "description": "Configura le impostazioni per la tua {device_type}. Regola gli intervalli di scansione e i timeout.",
+        "data": {
+          "name": "Nome del dispositivo",
+          "info_scan_interval": "Intervallo di scansione info dispositivo (secondi)",
+          "power_state_scan_interval": "Intervallo di aggiornamento stato (secondi)",
+          "connection_timeout": "Timeout connessione Bluetooth (secondi)"
+        },
+        "data_description": {
+          "name": "Nome personalizzato per questo dispositivo stazione base",
+          "info_scan_interval": "Con quale frequenza leggere le informazioni del dispositivo come firmware e modello (minimo 300 secondi)",
+          "power_state_scan_interval": "Con quale frequenza aggiornare lo stato del dispositivo (minimo 1 secondo, solo stazioni base Valve)",
+          "connection_timeout": "Tempo massimo di attesa per le connessioni Bluetooth (minimo 5 secondi)"
+        }
+      }
+    },
+    "error": {
+      "scan_interval_too_low": "L'intervallo di scansione è troppo basso. Controlla i valori minimi.",
+      "timeout_too_low": "Il timeout di connessione è troppo basso. Il minimo è 5 secondi.",
+      "invalid_data": "Dati di configurazione non validi forniti",
+      "unknown": "Si è verificato un errore imprevisto durante il salvataggio delle opzioni"
+    }
+  },
+  "entity": {
+    "button": {
+      "identify": {
+        "name": "Identifica"
+      }
+    },
+    "sensor": {
+      "firmware": {
+        "name": "Versione firmware"
+      },
+      "model": {
+        "name": "Numero modello"
+      },
+      "hardware": {
+        "name": "Versione hardware"
+      },
+      "manufacturer": {
+        "name": "Produttore"
+      },
+      "channel": {
+        "name": "Canale"
+      },
+      "pair_id": {
+        "name": "ID associazione"
+      },
+      "power_state": {
+        "name": "Stato alimentazione"
+      }
+    },
+    "switch": {
+      "power": {
+        "name": "Alimentazione"
+      },
+      "standby": {
+        "name": "Modalità standby"
+      }
+    }
+  }
+}

@@ -40,20 +40,18 @@
     "step": {
       "device_options": {
         "title": "Configurer {device_name}",
-        "description": "Configurez les paramètres pour votre {device_type}. Ajustez les intervalles de scan, les délais d'attente et activez/désactivez des capteurs spécifiques.",
+        "description": "Configurez les paramètres pour votre {device_type}. Ajustez les intervalles de scan et les délais d'attente.",
         "data": {
           "name": "Nom de l'appareil",
           "info_scan_interval": "Intervalle de scan des infos (secondes)",
           "power_state_scan_interval": "Intervalle de mise à jour d'état (secondes)",
-          "connection_timeout": "Délai de connexion Bluetooth (secondes)",
-          "enable_info_sensors": "Activer les capteurs d'informations"
+          "connection_timeout": "Délai de connexion Bluetooth (secondes)"
         },
         "data_description": {
           "name": "Nom personnalisé pour cet appareil de station de base",
           "info_scan_interval": "Fréquence de lecture des informations de l'appareil comme le firmware et le modèle (minimum 300 secondes)",
-          "power_state_scan_interval": "Fréquence de mise à jour de l'état de l'appareil - contrôle les interrupteurs, boutons et capteurs (minimum 1 seconde, stations de base Valve uniquement)",
-          "connection_timeout": "Temps maximum d'attente pour les connexions Bluetooth (minimum 5 secondes)",
-          "enable_info_sensors": "Afficher les capteurs pour le firmware, le modèle, le matériel et les informations du fabricant"
+          "power_state_scan_interval": "Fréquence de mise à jour de l'état de l'appareil (minimum 1 seconde, stations de base Valve uniquement)",
+          "connection_timeout": "Temps maximum d'attente pour les connexions Bluetooth (minimum 5 secondes)"
         }
       }
     },
