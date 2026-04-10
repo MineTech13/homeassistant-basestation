@@ -16,7 +16,6 @@ from .const import (
 )
 from .coordinator import BasestationCoordinator, BasestationInfoCoordinator
 from .device import BasestationDevice, ValveBasestationDevice, ViveBasestationDevice
-from .utils import get_sensor_device_config
 
 if TYPE_CHECKING:
     from .device import BaseStationDeviceInfoKey
@@ -46,11 +45,6 @@ async def async_setup_entry(
     coordinator: BasestationCoordinator = data["coordinator"]
     info_coordinator: BasestationInfoCoordinator = data["info_coordinator"]
 
-    # Config holen
-    device_config = get_sensor_device_config(entry)
-    if not device_config:
-        return
-
     entities: list[SensorEntity] = []
 
     # Info Sensors (Static, slow polling via info_coordinator)
@@ -69,7 +63,7 @@ async def async_setup_entry(
         entities.append(BasestationInfoSensor(info_coordinator, device, "pair_id", EntityCategory.DIAGNOSTIC))
 
     # Power State Sensor (Fast polling via Coordinator)
-    if isinstance(device, ValveBasestationDevice) and device_config["enable_power_state_sensor"]:
+    if isinstance(device, ValveBasestationDevice):
         entities.append(BasestationPowerStateSensor(coordinator, device))
 
     async_add_entities(entities)
@@ -121,7 +115,6 @@ class BasestationPowerStateSensor(CoordinatorEntity, SensorEntity):
     @property
     def native_value(self) -> str:
         """Return the state based on coordinator data."""
-        # Coordinator calls device.update(), so device.last_power_state is fresh
         val = self._device.last_power_state
         if val is None:
             return STATE_UNKNOWN
