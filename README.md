@@ -141,7 +141,6 @@ Access advanced settings via **Settings** → **Devices & Services** → **VR Ba
 - **Device Name** - Custom friendly name
 - **Scan Intervals** - Adjust update frequencies
 - **Connection Timeout** - BLE connection timeout
-- **Sensor Control** - Enable/disable specific sensors
 - **Power State Monitoring** - Control detailed state tracking
 
 ### Automation Integration
