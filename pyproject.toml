@@ -19,16 +19,17 @@ line-length = 120
 [tool.ruff.lint]
 select = ["ALL"]
 ignore = [
-    "ANN401", # any-type
-    "BLE001", # blind-except
-    "COM812", # missing-trailing-comma, handled via formatter
-    "CPY001", # missing-copyright-notice
-    "D203",   # no-blank-line-before-class (incompatible with formatter)
-    "D212",   # multi-line-summary-first-line (incompatible with formatter)
-    "D400",   # missing-trailing-period
-    "D415",   # missing-terminal-punctuation
-    "DOC201", # docstyle-missing-returns
-    "EXE002", # Files dont need to be executeable individually
+    "ANN401",  # any-type
+    "BLE001",  # blind-except
+    "COM812",  # missing-trailing-comma, handled via formatter
+    "CPY001",  # missing-copyright-notice
+    "D203",    # no-blank-line-before-class (incompatible with formatter)
+    "D212",    # multi-line-summary-first-line (incompatible with formatter)
+    "D400",    # missing-trailing-period
+    "D415",    # missing-terminal-punctuation
+    "DOC201",  # docstyle-missing-returns
+    "EXE002",  # Files dont need to be executeable individually
+    "PLR0913", # too-many-arguments
 ]
 
 [tool.ruff.lint.flake8-import-conventions]
