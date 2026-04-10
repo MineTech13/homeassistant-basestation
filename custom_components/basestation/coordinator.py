@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import datetime
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
@@ -55,3 +55,34 @@ class BasestationCoordinator(DataUpdateCoordinator):
                 "available": self.device.available,
                 "last_power_state": self.device.last_power_state,
             }
+
+
+class BasestationInfoCoordinator(DataUpdateCoordinator):
+    """Class to manage fetching static device information."""
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        device: BasestationDevice,
+        scan_interval: int,
+    ) -> None:
+        """Initialize the info coordinator."""
+        self.device = device
+        super().__init__(
+            hass,
+            _LOGGER,
+            name=f"{DOMAIN}_{device.mac}_info",
+            update_interval=datetime.timedelta(seconds=scan_interval),
+        )
+
+    async def _async_update_data(self) -> dict[str, Any]:
+        """Fetch static info from the device."""
+        try:
+            async with asyncio.timeout(self.device.connection_timeout):
+                return cast("dict[str, Any]", await self.device.read_device_info(force=True))
+        except TimeoutError as err:
+            msg = f"Timeout fetching device info for {self.device.mac}"
+            raise UpdateFailed(msg) from err
+        except Exception as err:
+            msg = f"Error fetching device info: {err}"
+            raise UpdateFailed(msg) from err

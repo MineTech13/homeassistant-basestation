@@ -18,7 +18,7 @@ from .const import (
     DEFAULT_POWER_STATE_SCAN_INTERVAL,
     DOMAIN,
 )
-from .coordinator import BasestationCoordinator
+from .coordinator import BasestationCoordinator, BasestationInfoCoordinator
 from .device import BasestationDevice, get_basestation_device
 
 if TYPE_CHECKING:
@@ -41,6 +41,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Get scan interval from options or defaults
     scan_interval = entry.options.get(CONF_POWER_STATE_SCAN_INTERVAL, DEFAULT_POWER_STATE_SCAN_INTERVAL)
+    info_scan_interval = entry.options.get(CONF_INFO_SCAN_INTERVAL, DEFAULT_INFO_SCAN_INTERVAL)
 
     if mac:
         device = get_basestation_device(
@@ -50,17 +51,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             device_type=device_type,
             pair_id=pair_id,
             connection_timeout=entry.options.get(CONF_CONNECTION_TIMEOUT, DEFAULT_CONNECTION_TIMEOUT),
-            info_scan_interval=entry.options.get(CONF_INFO_SCAN_INTERVAL, DEFAULT_INFO_SCAN_INTERVAL),
+            info_scan_interval=info_scan_interval,
         )
 
-        # Setup Coordinator
+        # Setup Coordinators
         coordinator = BasestationCoordinator(hass, device, scan_interval)
+        info_coordinator = BasestationInfoCoordinator(hass, device, info_scan_interval)
 
         # Initial refresh
         await coordinator.async_config_entry_first_refresh()
 
-        # Store device and coordinator
-        hass.data[DOMAIN][entry.entry_id] = {"device": device, "coordinator": coordinator}
+        # Info-Refresh nicht blockierend als Hintergrund-Task ausführen
+        entry.async_create_background_task(
+            hass, info_coordinator.async_request_refresh(), name=f"basestation_info_init_{device.mac}"
+        )
+
+        # Store device and coordinators
+        hass.data[DOMAIN][entry.entry_id] = {
+            "device": device,
+            "coordinator": coordinator,
+            "info_coordinator": info_coordinator,
+        }
 
     # Register update listener
     entry.async_on_unload(entry.add_update_listener(async_update_options))

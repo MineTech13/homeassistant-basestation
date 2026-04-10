@@ -1,5 +1,7 @@
 """Constants for the VR Basestation integration."""
 
+from enum import IntEnum
+
 DOMAIN = "basestation"
 
 # Device types
@@ -43,14 +45,26 @@ SETUP_MANUAL = "manual"
 V1_NAME_PREFIX = "HTC BS"
 V2_NAME_PREFIX = "LHB-"
 
+
+class BasestationPowerState(IntEnum):
+    """Power states for Valve Basestations."""
+
+    SLEEP = 0x00
+    STARTING_UP = 0x01
+    STANDBY = 0x02
+    BOOTING_1 = 0x08
+    BOOTING_2 = 0x09
+    ON = 0x0B
+
+
 # Power state descriptions for V2 basestations
-V2_STATE_DESCRIPTIONS = {
-    0x00: "Sleep",
-    0x01: "Starting Up",
-    0x02: "Standby",
-    0x08: "Booting",
-    0x09: "Booting",
-    0x0B: "On",
+V2_STATE_DESCRIPTIONS: dict[int, str] = {
+    BasestationPowerState.SLEEP: "Sleep",
+    BasestationPowerState.STARTING_UP: "Starting Up",
+    BasestationPowerState.STANDBY: "Standby",
+    BasestationPowerState.BOOTING_1: "Booting",
+    BasestationPowerState.BOOTING_2: "Booting",
+    BasestationPowerState.ON: "On",
 }
 
 # Default scan intervals (in seconds)
@@ -67,6 +81,3 @@ MAX_INITIAL_RETRIES = 3  # number of retries
 
 # Number of failures allowed before operation is considered unsuccessful
 MAX_CONSECUTIVE_FAILURES = 3
-
-# Magic number constants to avoid PLR2004 violations
-STANDBY_STATE_VALUE = 0x02  # State value for standby mode

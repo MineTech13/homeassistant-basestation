@@ -1,8 +1,6 @@
 """Sensor component for basestation integration."""
 
-import asyncio
 import logging
-import time
 from typing import TYPE_CHECKING
 
 from homeassistant.components.sensor import SensorEntity
@@ -14,11 +12,9 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import (
     DOMAIN,
-    INITIAL_RETRY_DELAY,
-    MAX_INITIAL_RETRIES,
     V2_STATE_DESCRIPTIONS,
 )
-from .coordinator import BasestationCoordinator
+from .coordinator import BasestationCoordinator, BasestationInfoCoordinator
 from .device import BasestationDevice, ValveBasestationDevice, ViveBasestationDevice
 from .utils import get_sensor_device_config
 
@@ -48,60 +44,29 @@ async def async_setup_entry(
         return
     device: BasestationDevice = data["device"]
     coordinator: BasestationCoordinator = data["coordinator"]
+    info_coordinator: BasestationInfoCoordinator = data["info_coordinator"]
 
     # Config holen
     device_config = get_sensor_device_config(entry)
     if not device_config:
         return
 
-    # Initial info read im Hintergrund ausführen, um den Setup-Vorgang nicht zu blockieren
-    entry.async_create_background_task(
-        hass, _perform_initial_device_info_read(device), name=f"basestation_init_{device.mac}"
-    )
-
     entities: list[SensorEntity] = []
 
-    # Info Sensors (Static, slow polling)
+    # Info Sensors (Static, slow polling via info_coordinator)
     entities.extend(
         [
-            BasestationInfoSensor(
-                device,
-                "firmware",
-                device_config["info_scan_interval"],
-                EntityCategory.DIAGNOSTIC,
-            ),
-            BasestationInfoSensor(
-                device,
-                "model",
-                device_config["info_scan_interval"],
-                EntityCategory.DIAGNOSTIC,
-            ),
-            BasestationInfoSensor(
-                device,
-                "hardware",
-                device_config["info_scan_interval"],
-                EntityCategory.DIAGNOSTIC,
-            ),
-            BasestationInfoSensor(
-                device,
-                "manufacturer",
-                device_config["info_scan_interval"],
-                EntityCategory.DIAGNOSTIC,
-            ),
+            BasestationInfoSensor(info_coordinator, device, "firmware", EntityCategory.DIAGNOSTIC),
+            BasestationInfoSensor(info_coordinator, device, "model", EntityCategory.DIAGNOSTIC),
+            BasestationInfoSensor(info_coordinator, device, "hardware", EntityCategory.DIAGNOSTIC),
+            BasestationInfoSensor(info_coordinator, device, "manufacturer", EntityCategory.DIAGNOSTIC),
         ]
     )
 
     if isinstance(device, ValveBasestationDevice):
-        entities.append(BasestationInfoSensor(device, "channel", device_config["info_scan_interval"]))
+        entities.append(BasestationInfoSensor(info_coordinator, device, "channel"))
     elif isinstance(device, ViveBasestationDevice) and device.pair_id:
-        entities.append(
-            BasestationInfoSensor(
-                device,
-                "pair_id",
-                device_config["info_scan_interval"],
-                EntityCategory.DIAGNOSTIC,
-            )
-        )
+        entities.append(BasestationInfoSensor(info_coordinator, device, "pair_id", EntityCategory.DIAGNOSTIC))
 
     # Power State Sensor (Fast polling via Coordinator)
     if isinstance(device, ValveBasestationDevice) and device_config["enable_power_state_sensor"]:
@@ -110,58 +75,34 @@ async def async_setup_entry(
     async_add_entities(entities)
 
 
-async def _perform_initial_device_info_read(device: BasestationDevice) -> None:
-    """Perform initial device info read with retries."""
-    for retry in range(MAX_INITIAL_RETRIES):
-        try:
-            if retry > 0:
-                await asyncio.sleep(INITIAL_RETRY_DELAY * (retry + 1))
-            if await device.read_device_info(force=True):
-                break
-        except Exception as err:
-            _LOGGER.debug("Initial read failed (retry %s): %s", retry, err)
-
-
-class BasestationInfoSensor(SensorEntity):
-    """
-    Sensor for static basestation information.
-
-    Not using coordinator as this data rarely changes and doesn't need 5s polling.
-    """
+class BasestationInfoSensor(CoordinatorEntity, SensorEntity):
+    """Sensor for static basestation information using the InfoCoordinator."""
 
     def __init__(
         self,
+        coordinator: BasestationInfoCoordinator,
         device: BasestationDevice,
         key: "BaseStationDeviceInfoKey",
-        scan_interval: int,
         entity_category: EntityCategory | None = None,
     ) -> None:
         """Initialize the info sensor."""
+        super().__init__(coordinator)
         self._device = device
         self._key: BaseStationDeviceInfoKey = key
-        self._scan_interval = scan_interval
         self._attr_unique_id = f"basestation_{device.mac}_{key}"
         self._attr_has_entity_name = True
         name, icon = SENSOR_DESCRIPTIONS.get(key, (key.capitalize(), "mdi:information"))
         self._attr_name = name
         self._attr_icon = icon
         self._attr_entity_category = entity_category
-        self._attr_native_value = device.get_info(key, STATE_UNKNOWN)
-        self._last_update = 0.0
         self._attr_device_info = device.device_info
 
-    async def async_update(self) -> None:
-        """Update the sensor value."""
-        current_time = time.time()
-        if current_time - self._last_update < self._scan_interval and self._attr_native_value != STATE_UNKNOWN:
-            return
-
-        try:
-            await self._device.read_device_info(force=False)
-            self._attr_native_value = self._device.get_info(self._key)
-            self._last_update = current_time
-        except Exception as err:
-            _LOGGER.debug("Error updating info sensor %s: %s", self.name, err)
+    @property
+    def native_value(self) -> str | None:
+        """Return the state based on info coordinator data."""
+        if not self.coordinator.data:
+            return self._device.get_info(self._key, STATE_UNKNOWN)
+        return self.coordinator.data.get(self._key, STATE_UNKNOWN)
 
 
 class BasestationPowerStateSensor(CoordinatorEntity, SensorEntity):
@@ -184,4 +125,4 @@ class BasestationPowerStateSensor(CoordinatorEntity, SensorEntity):
         val = self._device.last_power_state
         if val is None:
             return STATE_UNKNOWN
-        return V2_STATE_DESCRIPTIONS.get(val, f"Unknown ({hex(val)})")
+        return V2_STATE_DESCRIPTIONS.get(val, f"Unknown ({hex(val) if isinstance(val, int) else val})")

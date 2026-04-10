@@ -25,7 +25,6 @@ from .const import (
     HARDWARE_CHARACTERISTIC,
     MANUFACTURER_CHARACTERISTIC,
     MODEL_CHARACTERISTIC,
-    STANDBY_STATE_VALUE,
     V1_NAME_PREFIX,
     V1_PWR_CHARACTERISTIC,
     V2_CHANNEL_CHARACTERISTIC,
@@ -35,6 +34,7 @@ from .const import (
     V2_PWR_ON,
     V2_PWR_SLEEP,
     V2_PWR_STANDBY,
+    BasestationPowerState,
 )
 
 if TYPE_CHECKING:
@@ -426,20 +426,20 @@ class ValveBasestationDevice(BasestationDevice):
 
     @property
     def is_in_standby(self) -> bool:
-        """Return True if device is in standby mode (0x02)."""
-        return self._last_power_state == STANDBY_STATE_VALUE
+        """Return True if device is in standby mode."""
+        return self._last_power_state == BasestationPowerState.STANDBY
 
     async def turn_on(self) -> None:
         """Turn on the device."""
         result = await self.async_ble_operation(BLEOperationWrite(V2_PWR_CHARACTERISTIC, V2_PWR_ON))
         if result:
-            self._update_power_state(0x0B)
+            self._update_power_state(BasestationPowerState.ON)
 
     async def turn_off(self) -> None:
         """Turn off the device."""
         result = await self.async_ble_operation(BLEOperationWrite(V2_PWR_CHARACTERISTIC, V2_PWR_SLEEP))
         if result:
-            self._update_power_state(0x00)
+            self._update_power_state(BasestationPowerState.SLEEP)
 
     async def update(self) -> None:
         """Update the device state."""
@@ -447,21 +447,11 @@ class ValveBasestationDevice(BasestationDevice):
         if value and len(value) > 0:
             self._update_power_state(value[0])
 
-    async def get_raw_power_state(self) -> int | None:
-        """Get the raw power state value."""
-        if self._last_power_state is not None:
-            return self._last_power_state
-        value = await self.async_ble_operation(BLEOperationRead(V2_PWR_CHARACTERISTIC))
-        if value is not False and len(value) > 0:
-            self._update_power_state(value[0])
-            return value[0]
-        return None
-
     async def set_standby(self) -> None:
         """Set the device to standby mode."""
         result = await self.async_ble_operation(BLEOperationWrite(V2_PWR_CHARACTERISTIC, V2_PWR_STANDBY))
         if result:
-            self._update_power_state(0x02)
+            self._update_power_state(BasestationPowerState.STANDBY)
 
     async def identify(self) -> None:
         """Make the device blink its LED to identify it."""
