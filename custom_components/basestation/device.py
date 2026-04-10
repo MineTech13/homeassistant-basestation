@@ -480,7 +480,7 @@ class ValveBasestationDevice(BasestationDevice):
 class ViveBasestationDevice(BasestationDevice):
     """Vive Basestation (V1) device."""
 
-    def __init__(  # noqa: PLR0913
+    def __init__(
         self,
         hass: HomeAssistant,
         mac: str,
