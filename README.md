@@ -16,8 +16,8 @@ A comprehensive Home Assistant integration for managing **Valve Index® Base Sta
 
 ### 🔄 **Advanced Power Management**
 - **Power Control** - Turn base stations on/off remotely
-- **Standby Mode** - Energy-efficient standby for V2 base stations
-- **Power State Monitoring** - Real-time status tracking
+- **Standby Mode** - Turns off lasers while keeping motors spinning for short VR breaks, reducing motor wear from excessive spin-ups (V2 only)
+- **Power State Monitoring** - Regular polling-based status tracking (default 60s)
 - **Identify Function** - Blink LEDs to locate specific base stations
 
 ### 🛠️ **Modern Integration Features**
@@ -116,7 +116,7 @@ Each base station creates multiple entities for comprehensive control:
 
 ### 🔘 **Switches**
 - **Power Switch** - Main on/off control
-- **Standby Switch** *(V2 only)* - Energy-efficient standby mode
+- **Standby Switch** *(V2 only)* - Standby mode for short breaks (lasers off, motors spinning)
 
 ### 📈 **Sensors** *(Optional)*
 - **Firmware Version** - Current firmware information
