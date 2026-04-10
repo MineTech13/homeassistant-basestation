@@ -9,16 +9,11 @@ DEVICE_TYPE_V1 = "vive"
 DEVICE_TYPE_V2 = "valve"
 
 # Valve Index Basestation (V2) constants
-V2_PWR_SERVICE = "00001523-1212-efde-1523-785feabcd124"
 V2_PWR_CHARACTERISTIC = "00001525-1212-EFDE-1523-785FEABCD124"
 V2_CHANNEL_CHARACTERISTIC = "00001524-1212-EFDE-1523-785FEABCD124"
 V2_IDENTIFY_CHARACTERISTIC = "00008421-1212-EFDE-1523-785FEABCD124"
-V2_PWR_ON = b"\x01"
-V2_PWR_STANDBY = b"\x02"
-V2_PWR_SLEEP = b"\x00"
 
 # Vive Basestation (V1) constants
-V1_PWR_SERVICE = "0000cb00-0000-1000-8000-00805f9b34fb"
 V1_PWR_CHARACTERISTIC = "0000cb01-0000-1000-8000-00805f9b34fb"
 
 # Standard BLE characteristics for device information
@@ -36,7 +31,6 @@ CONF_SETUP_METHOD = "setup_method"
 CONF_INFO_SCAN_INTERVAL = "info_scan_interval"
 CONF_POWER_STATE_SCAN_INTERVAL = "power_state_scan_interval"
 CONF_CONNECTION_TIMEOUT = "connection_timeout"
-CONF_ENABLE_INFO_SENSORS = "enable_info_sensors"
 
 # Setup methods - simplified for device-based architecture
 SETUP_MANUAL = "manual"
@@ -71,13 +65,3 @@ V2_STATE_DESCRIPTIONS: dict[int, str] = {
 DEFAULT_INFO_SCAN_INTERVAL = 1800  # 30 minutes - for static info sensors
 DEFAULT_POWER_STATE_SCAN_INTERVAL = 60  # 60 seconds - for power state sensor (controls ALL state freshness)
 DEFAULT_CONNECTION_TIMEOUT = 10  # 10 seconds - BLE connection timeout
-
-# Default sensor enablement
-DEFAULT_ENABLE_INFO_SENSORS = True  # Enable device info sensors by default
-
-# Initial device info setup retries
-INITIAL_RETRY_DELAY = 10  # seconds
-MAX_INITIAL_RETRIES = 3  # number of retries
-
-# Number of failures allowed before operation is considered unsuccessful
-MAX_CONSECUTIVE_FAILURES = 3

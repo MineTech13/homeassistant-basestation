@@ -31,9 +31,6 @@ from .const import (
     V2_IDENTIFY_CHARACTERISTIC,
     V2_NAME_PREFIX,
     V2_PWR_CHARACTERISTIC,
-    V2_PWR_ON,
-    V2_PWR_SLEEP,
-    V2_PWR_STANDBY,
     BasestationPowerState,
 )
 
@@ -431,13 +428,17 @@ class ValveBasestationDevice(BasestationDevice):
 
     async def turn_on(self) -> None:
         """Turn on the device."""
-        result = await self.async_ble_operation(BLEOperationWrite(V2_PWR_CHARACTERISTIC, V2_PWR_ON))
+        result = await self.async_ble_operation(
+            BLEOperationWrite(V2_PWR_CHARACTERISTIC, bytes([BasestationPowerState.ON]))
+        )
         if result:
             self._update_power_state(BasestationPowerState.ON)
 
     async def turn_off(self) -> None:
         """Turn off the device."""
-        result = await self.async_ble_operation(BLEOperationWrite(V2_PWR_CHARACTERISTIC, V2_PWR_SLEEP))
+        result = await self.async_ble_operation(
+            BLEOperationWrite(V2_PWR_CHARACTERISTIC, bytes([BasestationPowerState.SLEEP]))
+        )
         if result:
             self._update_power_state(BasestationPowerState.SLEEP)
 
@@ -449,7 +450,9 @@ class ValveBasestationDevice(BasestationDevice):
 
     async def set_standby(self) -> None:
         """Set the device to standby mode."""
-        result = await self.async_ble_operation(BLEOperationWrite(V2_PWR_CHARACTERISTIC, V2_PWR_STANDBY))
+        result = await self.async_ble_operation(
+            BLEOperationWrite(V2_PWR_CHARACTERISTIC, bytes([BasestationPowerState.STANDBY]))
+        )
         if result:
             self._update_power_state(BasestationPowerState.STANDBY)
 
@@ -477,7 +480,7 @@ class ValveBasestationDevice(BasestationDevice):
 class ViveBasestationDevice(BasestationDevice):
     """Vive Basestation (V1) device."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         hass: HomeAssistant,
         mac: str,
