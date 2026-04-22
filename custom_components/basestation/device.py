@@ -239,6 +239,7 @@ class BasestationDevice(ABC):
                 return False
             self._is_connecting = True
 
+        client = None
         try:
             for attempt in range(MAX_RETRIES if op.retry else 1):
                 try:
@@ -272,7 +273,13 @@ class BasestationDevice(ABC):
                             result = True
 
                         self._record_connection_success()
-                        return result
+                        
+                        # Explicit disconnect to free proxy slots
+                        await client.disconnect()
+                        
+                    # Delay to allow BLE Proxy to internally clear the connection slot
+                    await asyncio.sleep(0.5)
+                    return result
 
                 except BleakError as err:
                     _LOGGER.debug("BLE error on %s: %s", self.mac, str(err))
@@ -280,6 +287,14 @@ class BasestationDevice(ABC):
                     _LOGGER.debug("Timeout executing BLE op on %s: %s", self.mac, str(err))
                 except Exception:
                     _LOGGER.exception("Unexpected error on %s", self.mac)
+                finally:
+                    # Ensure cleanup in case of failures
+                    if client and client.is_connected:
+                        try:
+                            await client.disconnect()
+                            await asyncio.sleep(0.5)
+                        except Exception:
+                            pass
 
                 if attempt < (MAX_RETRIES if op.retry else 1) - 1:
                     await asyncio.sleep(CONNECTION_DELAY)
@@ -328,6 +343,7 @@ class BasestationDevice(ABC):
             return None
 
         info: dict[BaseStationDeviceInfoKey, str] = {}
+        client = None
         try:
             async with asyncio.timeout(self.connection_timeout):
                 client = await establish_connection(
@@ -347,6 +363,9 @@ class BasestationDevice(ABC):
                 spec_success = await self._read_specific_info(client, info)
 
                 if std_success or spec_success:
+                    # Explicit disconnect
+                    await client.disconnect()
+                    await asyncio.sleep(0.5)
                     return info
         except BleakError as err:
             _LOGGER.debug("BLE error reading device info: %s", err)
@@ -355,6 +374,14 @@ class BasestationDevice(ABC):
         except Exception:
             _LOGGER.exception("Unexpected error reading device info")
         finally:
+            # Ensure cleanup in case of failures
+            if client and client.is_connected:
+                try:
+                    await client.disconnect()
+                    await asyncio.sleep(0.5)
+                except Exception:
+                    pass
+            
             async with self._client_lock:
                 self._is_connecting = False
                 self._current_client = None
@@ -428,6 +455,10 @@ class ValveBasestationDevice(BasestationDevice):
 
     async def turn_on(self) -> None:
         """Turn on the device."""
+        # Check to avoid redundant commands
+        if self._last_power_state == BasestationPowerState.ON:
+            return
+            
         result = await self.async_ble_operation(
             BLEOperationWrite(V2_PWR_CHARACTERISTIC, bytes([BasestationPowerState.ON]))
         )
@@ -436,6 +467,10 @@ class ValveBasestationDevice(BasestationDevice):
 
     async def turn_off(self) -> None:
         """Turn off the device."""
+        # Check to avoid redundant commands
+        if self._last_power_state == BasestationPowerState.SLEEP:
+            return
+            
         result = await self.async_ble_operation(
             BLEOperationWrite(V2_PWR_CHARACTERISTIC, bytes([BasestationPowerState.SLEEP]))
         )
@@ -450,6 +485,10 @@ class ValveBasestationDevice(BasestationDevice):
 
     async def set_standby(self) -> None:
         """Set the device to standby mode."""
+        # Check to avoid redundant commands
+        if self._last_power_state == BasestationPowerState.STANDBY:
+            return
+            
         result = await self.async_ble_operation(
             BLEOperationWrite(V2_PWR_CHARACTERISTIC, bytes([BasestationPowerState.STANDBY]))
         )
@@ -502,7 +541,7 @@ class ViveBasestationDevice(BasestationDevice):
 
     async def turn_on(self) -> None:
         """Turn on the device."""
-        if not self.pair_id:
+        if not self.pair_id or self._is_on:
             return
         try:
             command = bytearray(20)
@@ -517,7 +556,7 @@ class ViveBasestationDevice(BasestationDevice):
 
     async def turn_off(self) -> None:
         """Turn off the device."""
-        if not self.pair_id:
+        if not self.pair_id or not self._is_on:
             return
         try:
             command = bytearray(20)
