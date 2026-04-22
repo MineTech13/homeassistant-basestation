@@ -40,8 +40,11 @@ class BasestationCoordinator(DataUpdateCoordinator):
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from the device."""
         try:
-            # Timeout von 10 Sekunden für das Update festlegen
-            async with asyncio.timeout(self.device.connection_timeout):
+            # Der Timeout muss größer sein als connection_timeout,
+            # da die Device-Klasse eigene Retries durchführt (MAX_RETRIES = 2).
+            # Gesamtdauer = (Max Versuche * connection_timeout) + Verzögerungen.
+            timeout = (self.device.connection_timeout * 3) + 10
+            async with asyncio.timeout(timeout):
                 await self.device.update()
         except TimeoutError as err:
             msg = f"Timeout communicating with basestation {self.device.mac}"
@@ -78,7 +81,9 @@ class BasestationInfoCoordinator(DataUpdateCoordinator):
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch static info from the device."""
         try:
-            async with asyncio.timeout(self.device.connection_timeout):
+            # Auch hier den Timeout erhöhen für mögliche Retries (INFO_READ_RETRIES = 3).
+            timeout = (self.device.connection_timeout * 4) + 10
+            async with asyncio.timeout(timeout):
                 return cast("dict[str, Any]", await self.device.read_device_info(force=True))
         except TimeoutError as err:
             msg = f"Timeout fetching device info for {self.device.mac}"
