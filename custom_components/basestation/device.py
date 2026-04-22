@@ -222,16 +222,77 @@ class BasestationDevice(ABC):
         self._last_power_state_update = time.time()
         self._is_on = state != 0x00
 
+    async def _execute_single_ble_attempt(
+        self, op: BLEOperationRead | BLEOperationWrite, attempt: int
+    ) -> bool | bytearray | None:
+        """Execute a single BLE connection and operation attempt. Returns None on failure."""
+        client = None
+        result: bool | bytearray | None = None
+        try:
+            await connect_delay(attempt)
+            device = self.get_ble_device()
+            if not device:
+                return None
+
+            async with asyncio.timeout(self.connection_timeout):
+                client = await establish_connection(
+                    BleakClientWithServiceCache,
+                    device,
+                    device.name or device.address,
+                    disconnected_callback=self._handle_disconnect,
+                    max_attempts=1,
+                    use_services_cache=True,
+                )
+
+            async with client:
+                async with self._client_lock:
+                    self._current_client = client
+
+                if isinstance(op, BLEOperationRead):
+                    result = await client.read_gatt_char(op.characteristic_uuid)
+                else:
+                    await client.write_gatt_char(
+                        op.characteristic_uuid,
+                        op.value,
+                        response=not op.without_response,
+                    )
+                    result = True
+
+                self._record_connection_success()
+
+                # Explicit disconnect to free proxy slots
+                await client.disconnect()
+
+            # Delay to allow BLE Proxy to internally clear the connection slot
+            await asyncio.sleep(0.5)
+
+        except BleakError as err:
+            _LOGGER.debug("BLE error on %s: %s", self.mac, str(err))
+        except TimeoutError as err:
+            _LOGGER.debug("Timeout executing BLE op on %s: %s", self.mac, str(err))
+        except Exception:
+            _LOGGER.exception("Unexpected error on %s", self.mac)
+        else:
+            return result
+        finally:
+            if client and client.is_connected:
+                try:
+                    await client.disconnect()
+                    await asyncio.sleep(0.5)
+                except Exception as err:
+                    _LOGGER.debug("Ignored disconnect error: %s", err)
+
+        return None
+
     @overload
     async def async_ble_operation(self, op: BLEOperationRead) -> bytearray | Literal[False]: ...
     @overload
     async def async_ble_operation(self, op: BLEOperationWrite) -> bool: ...
-    async def async_ble_operation(self, op: BLEOperationRead | BLEOperationWrite) -> bool | bytearray:  # noqa: C901
+    async def async_ble_operation(self, op: BLEOperationRead | BLEOperationWrite) -> bool | bytearray:
         """Execute a BLE operation with proper connection management."""
         if not self._should_attempt_connection():
             return False
 
-        result: bool | bytearray
         self._last_connection_attempt = time.time()
 
         async with self._client_lock:
@@ -239,64 +300,14 @@ class BasestationDevice(ABC):
                 return False
             self._is_connecting = True
 
-        client = None
         try:
-            for attempt in range(MAX_RETRIES if op.retry else 1):
-                try:
-                    await connect_delay(attempt)
-                    device = self.get_ble_device()
-                    if not device:
-                        continue
-
-                    async with asyncio.timeout(self.connection_timeout):
-                        client = await establish_connection(
-                            BleakClientWithServiceCache,
-                            device,
-                            device.name or device.address,
-                            disconnected_callback=self._handle_disconnect,
-                            max_attempts=1,
-                            use_services_cache=True,
-                        )
-
-                    async with client:
-                        async with self._client_lock:
-                            self._current_client = client
-
-                        if isinstance(op, BLEOperationRead):
-                            result = await client.read_gatt_char(op.characteristic_uuid)
-                        else:
-                            await client.write_gatt_char(
-                                op.characteristic_uuid,
-                                op.value,
-                                response=not op.without_response,
-                            )
-                            result = True
-
-                        self._record_connection_success()
-                        
-                        # Explicit disconnect to free proxy slots
-                        await client.disconnect()
-                        
-                    # Delay to allow BLE Proxy to internally clear the connection slot
-                    await asyncio.sleep(0.5)
+            max_attempts = MAX_RETRIES if op.retry else 1
+            for attempt in range(max_attempts):
+                result = await self._execute_single_ble_attempt(op, attempt)
+                if result is not None:
                     return result
 
-                except BleakError as err:
-                    _LOGGER.debug("BLE error on %s: %s", self.mac, str(err))
-                except TimeoutError as err:
-                    _LOGGER.debug("Timeout executing BLE op on %s: %s", self.mac, str(err))
-                except Exception:
-                    _LOGGER.exception("Unexpected error on %s", self.mac)
-                finally:
-                    # Ensure cleanup in case of failures
-                    if client and client.is_connected:
-                        try:
-                            await client.disconnect()
-                            await asyncio.sleep(0.5)
-                        except Exception:
-                            pass
-
-                if attempt < (MAX_RETRIES if op.retry else 1) - 1:
+                if attempt < max_attempts - 1:
                     await asyncio.sleep(CONNECTION_DELAY)
 
             self._record_connection_failure()
@@ -344,6 +355,8 @@ class BasestationDevice(ABC):
 
         info: dict[BaseStationDeviceInfoKey, str] = {}
         client = None
+        std_success = False
+        spec_success = False
         try:
             async with asyncio.timeout(self.connection_timeout):
                 client = await establish_connection(
@@ -366,22 +379,24 @@ class BasestationDevice(ABC):
                     # Explicit disconnect
                     await client.disconnect()
                     await asyncio.sleep(0.5)
-                    return info
         except BleakError as err:
             _LOGGER.debug("BLE error reading device info: %s", err)
         except TimeoutError as err:
             _LOGGER.debug("Timeout reading device info: %s", err)
         except Exception:
             _LOGGER.exception("Unexpected error reading device info")
+        else:
+            if std_success or spec_success:
+                return info
         finally:
             # Ensure cleanup in case of failures
             if client and client.is_connected:
                 try:
                     await client.disconnect()
                     await asyncio.sleep(0.5)
-                except Exception:
-                    pass
-            
+                except Exception as err:
+                    _LOGGER.debug("Ignored disconnect error: %s", err)
+
             async with self._client_lock:
                 self._is_connecting = False
                 self._current_client = None
@@ -458,7 +473,7 @@ class ValveBasestationDevice(BasestationDevice):
         # Check to avoid redundant commands
         if self._last_power_state == BasestationPowerState.ON:
             return
-            
+
         result = await self.async_ble_operation(
             BLEOperationWrite(V2_PWR_CHARACTERISTIC, bytes([BasestationPowerState.ON]))
         )
@@ -470,7 +485,7 @@ class ValveBasestationDevice(BasestationDevice):
         # Check to avoid redundant commands
         if self._last_power_state == BasestationPowerState.SLEEP:
             return
-            
+
         result = await self.async_ble_operation(
             BLEOperationWrite(V2_PWR_CHARACTERISTIC, bytes([BasestationPowerState.SLEEP]))
         )
@@ -488,7 +503,7 @@ class ValveBasestationDevice(BasestationDevice):
         # Check to avoid redundant commands
         if self._last_power_state == BasestationPowerState.STANDBY:
             return
-            
+
         result = await self.async_ble_operation(
             BLEOperationWrite(V2_PWR_CHARACTERISTIC, bytes([BasestationPowerState.STANDBY]))
         )
