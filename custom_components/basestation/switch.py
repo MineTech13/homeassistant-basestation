@@ -25,6 +25,7 @@ async def async_setup_entry(
     data = hass.data[DOMAIN].get(entry.entry_id)
     if data is None:
         return
+
     device: BasestationDevice = data["device"]
     coordinator: BasestationCoordinator = data["coordinator"]
 
@@ -50,12 +51,19 @@ class BasestationSwitch(CoordinatorEntity, SwitchEntity):
         self._attr_device_info = device.device_info
 
     @property
+    def available(self) -> bool:
+        """Return True if entity is available."""
+        # Kombiniert den Coordinator-Status mit dem internen Device-Status
+        return super().available and self._device.available
+
+    @property
     def is_on(self) -> bool:
         """Return if the switch is currently on or off."""
         if isinstance(self._device, ValveBasestationDevice):
             if self._device.last_power_state is None:
                 return False
-            return self._device.last_power_state != 0x00
+            # Check against the actual 'ON' state (0x0B)
+            return self._device.last_power_state == 0x0B
         return self._device.is_on
 
     async def async_turn_on(self, **_kwargs: Any) -> None:
@@ -81,6 +89,12 @@ class BasestationStandbySwitch(CoordinatorEntity, SwitchEntity):
         self._attr_name = "Standby Mode"
         self._attr_icon = "mdi:sleep"
         self._attr_device_info = device.device_info
+
+    @property
+    def available(self) -> bool:
+        """Return True if entity is available."""
+        # Kombiniert den Coordinator-Status mit dem internen Device-Status
+        return super().available and self._device.available
 
     @property
     def is_on(self) -> bool:
