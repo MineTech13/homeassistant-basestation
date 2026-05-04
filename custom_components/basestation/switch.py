@@ -9,7 +9,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from .const import DOMAIN, BasestationPowerState
 from .coordinator import BasestationCoordinator
 from .device import BasestationDevice, ValveBasestationDevice
 
@@ -62,8 +62,7 @@ class BasestationSwitch(CoordinatorEntity, SwitchEntity):
         if isinstance(self._device, ValveBasestationDevice):
             if self._device.last_power_state is None:
                 return False
-            # Check against the actual 'ON' state (0x0B)
-            return self._device.last_power_state == 0x0B
+            return self._device.last_power_state == BasestationPowerState.ON
         return self._device.is_on
 
     async def async_turn_on(self, **_kwargs: Any) -> None:
