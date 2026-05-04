@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .const import DOMAIN
+from .const import DOMAIN, BasestationPowerState
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -27,22 +27,24 @@ class BasestationCoordinator(DataUpdateCoordinator):
         hass: HomeAssistant,
         device: BasestationDevice,
         scan_interval: int,
+        fast_scan_interval: int,
     ) -> None:
         """Initialize the coordinator."""
         self.device = device
+
+        self.default_interval = datetime.timedelta(seconds=scan_interval)
+        self.fast_interval = datetime.timedelta(seconds=fast_scan_interval)
+
         super().__init__(
             hass,
             _LOGGER,
             name=f"{DOMAIN}_{device.mac}",
-            update_interval=datetime.timedelta(seconds=scan_interval),
+            update_interval=self.default_interval,
         )
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from the device."""
         try:
-            # Der Timeout muss größer sein als connection_timeout,
-            # da die Device-Klasse eigene Retries durchführt (MAX_RETRIES = 2).
-            # Gesamtdauer = (Max Versuche * connection_timeout) + Verzögerungen.
             timeout = (self.device.connection_timeout * 3) + 10
             async with asyncio.timeout(timeout):
                 await self.device.update()
@@ -53,6 +55,17 @@ class BasestationCoordinator(DataUpdateCoordinator):
             msg = f"Error communicating with basestation: {err}"
             raise UpdateFailed(msg) from err
         else:
+            booting_states = (
+                BasestationPowerState.STARTING_UP,
+                BasestationPowerState.BOOTING_1,
+                BasestationPowerState.BOOTING_2,
+            )
+
+            if self.device.last_power_state in booting_states:
+                self.update_interval = self.fast_interval
+            else:
+                self.update_interval = self.default_interval
+
             return {
                 "is_on": self.device.is_on,
                 "available": self.device.available,
@@ -81,7 +94,6 @@ class BasestationInfoCoordinator(DataUpdateCoordinator):
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch static info from the device."""
         try:
-            # Auch hier den Timeout erhöhen für mögliche Retries (INFO_READ_RETRIES = 3).
             timeout = (self.device.connection_timeout * 4) + 10
             async with asyncio.timeout(timeout):
                 return cast("dict[str, Any]", await self.device.read_device_info(force=True))

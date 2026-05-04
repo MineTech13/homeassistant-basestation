@@ -15,11 +15,13 @@ from homeassistant.helpers.device_registry import format_mac
 from .const import (
     CONF_CONNECTION_TIMEOUT,
     CONF_DEVICE_TYPE,
+    CONF_FAST_POLLING_INTERVAL,
     CONF_INFO_SCAN_INTERVAL,
     CONF_PAIR_ID,
     CONF_POWER_STATE_SCAN_INTERVAL,
     CONF_SETUP_METHOD,
     DEFAULT_CONNECTION_TIMEOUT,
+    DEFAULT_FAST_POLLING_INTERVAL,
     DEFAULT_INFO_SCAN_INTERVAL,
     DEFAULT_POWER_STATE_SCAN_INTERVAL,
     DEVICE_TYPE_V1,
@@ -43,6 +45,7 @@ PAIR_ID_REGEX = r"^(0x)?[0-9A-Fa-f]{1,8}$"
 MIN_INFO_SCAN_INTERVAL = 300  # 5 minutes minimum
 MIN_CONNECTION_TIMEOUT = 5  # 5 seconds minimum
 MIN_STATE_SCAN_INTERVAL = 1  # 1 second minimum
+MIN_FAST_POLLING_INTERVAL = 1  # 1 second minimum
 
 
 class BasestationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -141,7 +144,6 @@ class BasestationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         # For V2 devices, create the entry directly
         title = user_provided_name if user_provided_name else f"Basestation {mac[-5:]}"
-
         return self.async_create_entry(
             title=title,
             data={
@@ -326,10 +328,10 @@ class BasestationOptionsFlow(config_entries.OptionsFlow):
             # Validate scan intervals
             if user_input.get(CONF_INFO_SCAN_INTERVAL, 0) < MIN_INFO_SCAN_INTERVAL:
                 errors[CONF_INFO_SCAN_INTERVAL] = "scan_interval_too_low"
-
             if user_input.get(CONF_POWER_STATE_SCAN_INTERVAL, 0) < MIN_STATE_SCAN_INTERVAL:
                 errors[CONF_POWER_STATE_SCAN_INTERVAL] = "scan_interval_too_low"
-
+            if user_input.get(CONF_FAST_POLLING_INTERVAL, 0) < MIN_FAST_POLLING_INTERVAL:
+                errors[CONF_FAST_POLLING_INTERVAL] = "scan_interval_too_low"
             if user_input.get(CONF_CONNECTION_TIMEOUT, 0) < MIN_CONNECTION_TIMEOUT:
                 errors[CONF_CONNECTION_TIMEOUT] = "timeout_too_low"
 
@@ -364,6 +366,11 @@ class BasestationOptionsFlow(config_entries.OptionsFlow):
                         default=current_options.get(CONF_POWER_STATE_SCAN_INTERVAL, DEFAULT_POWER_STATE_SCAN_INTERVAL),
                         description="How often to update device state (seconds, minimum 1)",
                     ): vol.All(vol.Coerce(int), vol.Range(min=1, max=300)),
+                    vol.Required(
+                        CONF_FAST_POLLING_INTERVAL,
+                        default=current_options.get(CONF_FAST_POLLING_INTERVAL, DEFAULT_FAST_POLLING_INTERVAL),
+                        description="Fast polling interval during boot (seconds, minimum 1)",
+                    ): vol.All(vol.Coerce(int), vol.Range(min=1, max=60)),
                 }
             )
 

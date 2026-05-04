@@ -30,6 +30,7 @@ CONF_SETUP_METHOD = "setup_method"
 # Options flow configuration keys (current)
 CONF_INFO_SCAN_INTERVAL = "info_scan_interval"
 CONF_POWER_STATE_SCAN_INTERVAL = "power_state_scan_interval"
+CONF_FAST_POLLING_INTERVAL = "fast_polling_interval"
 CONF_CONNECTION_TIMEOUT = "connection_timeout"
 
 # Setup methods - simplified for device-based architecture
@@ -77,4 +78,5 @@ V2_STATE_DESCRIPTIONS: dict[int, str] = {
 # Default scan intervals (in seconds)
 DEFAULT_INFO_SCAN_INTERVAL = 1800  # 30 minutes - for static info sensors
 DEFAULT_POWER_STATE_SCAN_INTERVAL = 60  # 60 seconds - for power state sensor (controls ALL state freshness)
+DEFAULT_FAST_POLLING_INTERVAL = 5  # 5 seconds - for fast polling during boot
 DEFAULT_CONNECTION_TIMEOUT = 10  # 10 seconds - BLE connection timeout

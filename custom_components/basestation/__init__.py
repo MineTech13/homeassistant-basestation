@@ -10,10 +10,12 @@ from homeassistant.const import CONF_MAC, CONF_NAME, Platform
 from .const import (
     CONF_CONNECTION_TIMEOUT,
     CONF_DEVICE_TYPE,
+    CONF_FAST_POLLING_INTERVAL,
     CONF_INFO_SCAN_INTERVAL,
     CONF_PAIR_ID,
     CONF_POWER_STATE_SCAN_INTERVAL,
     DEFAULT_CONNECTION_TIMEOUT,
+    DEFAULT_FAST_POLLING_INTERVAL,
     DEFAULT_INFO_SCAN_INTERVAL,
     DEFAULT_POWER_STATE_SCAN_INTERVAL,
     DOMAIN,
@@ -42,6 +44,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Get scan interval from options or defaults
     scan_interval = entry.options.get(CONF_POWER_STATE_SCAN_INTERVAL, DEFAULT_POWER_STATE_SCAN_INTERVAL)
     info_scan_interval = entry.options.get(CONF_INFO_SCAN_INTERVAL, DEFAULT_INFO_SCAN_INTERVAL)
+    fast_scan_interval = entry.options.get(CONF_FAST_POLLING_INTERVAL, DEFAULT_FAST_POLLING_INTERVAL)
 
     if mac:
         device = get_basestation_device(
@@ -55,7 +58,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
 
         # Setup Coordinators
-        coordinator = BasestationCoordinator(hass, device, scan_interval)
+        coordinator = BasestationCoordinator(hass, device, scan_interval, fast_scan_interval)
         info_coordinator = BasestationInfoCoordinator(hass, device, info_scan_interval)
 
         # Initial refresh

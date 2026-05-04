@@ -45,12 +45,14 @@
           "name": "Gerätename",
           "info_scan_interval": "Geräteinfo Scan-Intervall (Sekunden)",
           "power_state_scan_interval": "Statusaktualisierungs-Intervall (Sekunden)",
+          "fast_polling_interval": "Schnelles Scan-Intervall beim Booten (Sekunden)",
           "connection_timeout": "Bluetooth Verbindungs-Timeout (Sekunden)"
         },
         "data_description": {
           "name": "Benutzerdefinierter Name für dieses Basestation-Gerät",
           "info_scan_interval": "Wie oft Geräteinformationen wie Firmware und Modell gelesen werden (Minimum 300 Sekunden)",
           "power_state_scan_interval": "Wie oft der Gerätestatus aktualisiert wird - steuert Schalter, Tasten und Sensoren (Minimum 1 Sekunde, nur Valve Basestations)",
+          "fast_polling_interval": "Wie oft der Gerätestatus während des Hochfahrens aktualisiert wird (Minimum 1 Sekunde, nur Valve Basestations)",
           "connection_timeout": "Maximale Wartezeit für Bluetooth-Verbindungen (Minimum 5 Sekunden)"
         }
       }

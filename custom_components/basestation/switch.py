@@ -53,7 +53,6 @@ class BasestationSwitch(CoordinatorEntity, SwitchEntity):
     @property
     def available(self) -> bool:
         """Return True if entity is available."""
-        # Kombiniert den Coordinator-Status mit dem internen Device-Status
         return super().available and self._device.available
 
     @property
@@ -62,7 +61,16 @@ class BasestationSwitch(CoordinatorEntity, SwitchEntity):
         if isinstance(self._device, ValveBasestationDevice):
             if self._device.last_power_state is None:
                 return False
-            return self._device.last_power_state == BasestationPowerState.ON
+
+            active_states = (
+                BasestationPowerState.ON,
+                BasestationPowerState.STANDBY,
+                BasestationPowerState.STARTING_UP,
+                BasestationPowerState.BOOTING_1,
+                BasestationPowerState.BOOTING_2,
+            )
+            return self._device.last_power_state in active_states
+
         return self._device.is_on
 
     async def async_turn_on(self, **_kwargs: Any) -> None:
@@ -92,14 +100,13 @@ class BasestationStandbySwitch(CoordinatorEntity, SwitchEntity):
     @property
     def available(self) -> bool:
         """Return True if entity is available."""
-        # Kombiniert den Coordinator-Status mit dem internen Device-Status
         return super().available and self._device.available
 
     @property
     def is_on(self) -> bool:
         """Return if the standby mode is active."""
         if isinstance(self._device, ValveBasestationDevice):
-            return self._device.is_in_standby
+            return self._device.last_power_state == BasestationPowerState.STANDBY
         return False
 
     async def async_turn_on(self, **_kwargs: Any) -> None:
