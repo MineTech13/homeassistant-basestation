@@ -471,6 +471,7 @@ class ValveBasestationDevice(BasestationDevice):
     ) -> None:
         """Initialize the Valve basestation device."""
         super().__init__(hass, mac, name, connection_timeout, info_scan_interval)
+        self._ignore_reads_until = 0.0
 
     @property
     def default_name(self) -> str:
@@ -493,6 +494,7 @@ class ValveBasestationDevice(BasestationDevice):
         )
         if result:
             self._update_power_state(BasestationPowerState.STARTING_UP)
+            self._ignore_reads_until = time.time() + 3.0
 
     async def turn_off(self) -> None:
         """Turn off the device."""
@@ -505,9 +507,14 @@ class ValveBasestationDevice(BasestationDevice):
         )
         if result:
             self._update_power_state(BasestationPowerState.SLEEP)
+            self._ignore_reads_until = time.time() + 3.0
 
     async def update(self) -> None:
         """Update the device state."""
+        # Überspringe BLE Reads kurz nach einem Schreib-Kommando (Gummiband-Effekt beheben)
+        if time.time() < self._ignore_reads_until:
+            return
+
         value = await self.async_ble_operation(BLEOperationRead(V2_PWR_CHARACTERISTIC))
         if value and len(value) > 0:
             self._update_power_state(value[0])
@@ -523,6 +530,7 @@ class ValveBasestationDevice(BasestationDevice):
         )
         if result:
             self._update_power_state(BasestationPowerState.STANDBY)
+            self._ignore_reads_until = time.time() + 3.0
 
     async def identify(self) -> None:
         """Make the device blink its LED to identify it."""
