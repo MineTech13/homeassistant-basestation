@@ -1,6 +1,6 @@
 """Constants for the VR Basestation integration."""
 
-from enum import IntEnum
+from enum import Enum, IntEnum
 
 DOMAIN = "basestation"
 
@@ -49,6 +49,19 @@ class BasestationPowerState(IntEnum):
     BOOTING_1 = 0x08
     BOOTING_2 = 0x09
     ON = 0x0B
+
+
+class V1Command(bytes, Enum):
+    """Command prefixes for Vive Basestations (V1)."""
+
+    TURN_ON = b"\x12\x00\x00\x00"
+    TURN_OFF = b"\x12\x02\x00\x01"
+
+
+class V2Command(bytes, Enum):
+    """Specific commands for Valve Basestations (V2)."""
+
+    IDENTIFY = b"\x00"
 
 
 # Power state descriptions for V2 basestations

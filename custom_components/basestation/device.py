@@ -32,6 +32,8 @@ from .const import (
     V2_NAME_PREFIX,
     V2_PWR_CHARACTERISTIC,
     BasestationPowerState,
+    V1Command,
+    V2Command,
 )
 
 if TYPE_CHECKING:
@@ -87,6 +89,7 @@ class BasestationDevice(ABC):
         self.custom_name = name
         self.connection_timeout = connection_timeout
         self.info_scan_interval = info_scan_interval
+
         self._is_on = False
         self._available = False
         self._info: dict[BaseStationDeviceInfoKey, str] = {}
@@ -100,7 +103,6 @@ class BasestationDevice(ABC):
         self._last_connection_attempt = 0.0
         self._consecutive_failures = 0
         self._last_successful_connection = 0.0
-
         self._current_client: BleakClientWithServiceCache | None = None
         self._client_lock = asyncio.Lock()
 
@@ -192,6 +194,7 @@ class BasestationDevice(ABC):
 
     def _should_attempt_connection(self) -> bool:
         current_time = time.time()
+
         if self._is_connecting:
             return False
 
@@ -228,8 +231,10 @@ class BasestationDevice(ABC):
         """Execute a single BLE connection and operation attempt. Returns None on failure."""
         client = None
         result: bool | bytearray | None = None
+
         try:
             await connect_delay(attempt)
+
             device = self.get_ble_device()
             if not device:
                 return None
@@ -259,7 +264,6 @@ class BasestationDevice(ABC):
                     result = True
 
                 self._record_connection_success()
-
                 # Explicit disconnect to free proxy slots
                 await client.disconnect()
 
@@ -286,8 +290,10 @@ class BasestationDevice(ABC):
 
     @overload
     async def async_ble_operation(self, op: BLEOperationRead) -> bytearray | Literal[False]: ...
+
     @overload
     async def async_ble_operation(self, op: BLEOperationWrite) -> bool: ...
+
     async def async_ble_operation(self, op: BLEOperationRead | BLEOperationWrite) -> bool | bytearray:
         """Execute a BLE operation with proper connection management."""
         if not self._should_attempt_connection():
@@ -302,6 +308,7 @@ class BasestationDevice(ABC):
 
         try:
             max_attempts = MAX_RETRIES if op.retry else 1
+
             for attempt in range(max_attempts):
                 result = await self._execute_single_ble_attempt(op, attempt)
                 if result is not None:
@@ -327,6 +334,7 @@ class BasestationDevice(ABC):
         self, client: BleakClientWithServiceCache, info: dict[BaseStationDeviceInfoKey, str]
     ) -> bool:
         any_read_successful = False
+
         for characteristic, key in cast(
             "Iterable[tuple[str, BaseStationDeviceInfoKey]]",
             (
@@ -346,6 +354,7 @@ class BasestationDevice(ABC):
                 _LOGGER.debug("Timeout reading characteristic %s: %s", key, err)
             except Exception:
                 _LOGGER.exception("Unexpected error reading characteristic %s", key)
+
         return any_read_successful
 
     async def _attempt_device_info_read(self) -> dict[BaseStationDeviceInfoKey, str] | None:
@@ -357,6 +366,7 @@ class BasestationDevice(ABC):
         client = None
         std_success = False
         spec_success = False
+
         try:
             async with asyncio.timeout(self.connection_timeout):
                 client = await establish_connection(
@@ -379,6 +389,7 @@ class BasestationDevice(ABC):
                     # Explicit disconnect
                     await client.disconnect()
                     await asyncio.sleep(0.5)
+
         except BleakError as err:
             _LOGGER.debug("BLE error reading device info: %s", err)
         except TimeoutError as err:
@@ -400,11 +411,13 @@ class BasestationDevice(ABC):
             async with self._client_lock:
                 self._is_connecting = False
                 self._current_client = None
+
         return None
 
     async def read_device_info(self, /, *, force: bool = False) -> dict[BaseStationDeviceInfoKey, str]:
         """Read device information characteristics."""
         current_time = time.time()
+
         if (
             not force
             and self._device_info_read_success
@@ -426,6 +439,7 @@ class BasestationDevice(ABC):
                 self._is_connecting = True
 
             info = await self._attempt_device_info_read()
+
             if info:
                 self._info |= info
                 self._record_connection_success()
@@ -475,10 +489,10 @@ class ValveBasestationDevice(BasestationDevice):
             return
 
         result = await self.async_ble_operation(
-            BLEOperationWrite(V2_PWR_CHARACTERISTIC, bytes([BasestationPowerState.ON]))
+            BLEOperationWrite(V2_PWR_CHARACTERISTIC, bytes([BasestationPowerState.STARTING_UP]), without_response=True)
         )
         if result:
-            self._update_power_state(BasestationPowerState.ON)
+            self._update_power_state(BasestationPowerState.STARTING_UP)
 
     async def turn_off(self) -> None:
         """Turn off the device."""
@@ -487,7 +501,7 @@ class ValveBasestationDevice(BasestationDevice):
             return
 
         result = await self.async_ble_operation(
-            BLEOperationWrite(V2_PWR_CHARACTERISTIC, bytes([BasestationPowerState.SLEEP]))
+            BLEOperationWrite(V2_PWR_CHARACTERISTIC, bytes([BasestationPowerState.SLEEP]), without_response=True)
         )
         if result:
             self._update_power_state(BasestationPowerState.SLEEP)
@@ -505,14 +519,16 @@ class ValveBasestationDevice(BasestationDevice):
             return
 
         result = await self.async_ble_operation(
-            BLEOperationWrite(V2_PWR_CHARACTERISTIC, bytes([BasestationPowerState.STANDBY]))
+            BLEOperationWrite(V2_PWR_CHARACTERISTIC, bytes([BasestationPowerState.STANDBY]), without_response=True)
         )
         if result:
             self._update_power_state(BasestationPowerState.STANDBY)
 
     async def identify(self) -> None:
         """Make the device blink its LED to identify it."""
-        await self.async_ble_operation(BLEOperationWrite(V2_IDENTIFY_CHARACTERISTIC, b"\x00", without_response=True))
+        await self.async_ble_operation(
+            BLEOperationWrite(V2_IDENTIFY_CHARACTERISTIC, V2Command.IDENTIFY.value, without_response=True)
+        )
 
     async def _read_specific_info(
         self, client: BleakClientWithServiceCache, info: dict[BaseStationDeviceInfoKey, Any]
@@ -528,6 +544,7 @@ class ValveBasestationDevice(BasestationDevice):
             _LOGGER.debug("Timeout reading channel: %s", err)
         except Exception:
             _LOGGER.exception("Unexpected error reading channel")
+
         return False
 
 
@@ -558,11 +575,15 @@ class ViveBasestationDevice(BasestationDevice):
         """Turn on the device."""
         if not self.pair_id or self._is_on:
             return
+
         try:
             command = bytearray(20)
-            command[0:4] = b"\x12\x00\x00\x00"
+            command[0:4] = V1Command.TURN_ON.value
             command[4:8] = struct.pack("<I", int(self.pair_id))
-            if await self.async_ble_operation(BLEOperationWrite(V1_PWR_CHARACTERISTIC, bytes(command))):
+
+            if await self.async_ble_operation(
+                BLEOperationWrite(V1_PWR_CHARACTERISTIC, bytes(command), without_response=True)
+            ):
                 self._is_on = True
         except (ValueError, struct.error):
             _LOGGER.exception("Invalid pair_id format for V1 basestation %s", self.mac)
@@ -573,11 +594,15 @@ class ViveBasestationDevice(BasestationDevice):
         """Turn off the device."""
         if not self.pair_id or not self._is_on:
             return
+
         try:
             command = bytearray(20)
-            command[0:4] = b"\x12\x02\x00\x01"
+            command[0:4] = V1Command.TURN_OFF.value
             command[4:8] = struct.pack("<I", int(self.pair_id))
-            if await self.async_ble_operation(BLEOperationWrite(V1_PWR_CHARACTERISTIC, bytes(command))):
+
+            if await self.async_ble_operation(
+                BLEOperationWrite(V1_PWR_CHARACTERISTIC, bytes(command), without_response=True)
+            ):
                 self._is_on = False
         except (ValueError, struct.error):
             _LOGGER.exception("Invalid pair_id format for V1 basestation %s", self.mac)
@@ -618,6 +643,7 @@ def get_basestation_device(
         return ValveBasestationDevice(
             hass, mac, name, connection_timeout=connection_timeout, info_scan_interval=info_scan_interval
         )
+
     if device_type == DEVICE_TYPE_V1 or (name and name.startswith(V1_NAME_PREFIX)):
         return ViveBasestationDevice(
             hass, mac, name, pair_id, connection_timeout=connection_timeout, info_scan_interval=info_scan_interval
