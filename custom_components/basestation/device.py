@@ -70,6 +70,8 @@ class BLEOperationWrite:
     value: bytes
     retry: bool = True
     without_response: bool = False
+    repeat_count: int = 1
+    repeat_delay: float = 1.0
 
 
 class BasestationDevice(ABC):
@@ -225,6 +227,23 @@ class BasestationDevice(ABC):
         self._last_power_state_update = time.time()
         self._is_on = state != 0x00
 
+    async def _perform_ble_operation(
+        self, client: BleakClientWithServiceCache, op: BLEOperationRead | BLEOperationWrite
+    ) -> bool | bytearray | None:
+        """Perform the read or write operation on the connected client."""
+        if isinstance(op, BLEOperationRead):
+            return await client.read_gatt_char(op.characteristic_uuid)
+
+        for i in range(op.repeat_count):
+            await client.write_gatt_char(
+                op.characteristic_uuid,
+                op.value,
+                response=not op.without_response,
+            )
+            if i < op.repeat_count - 1:
+                await asyncio.sleep(op.repeat_delay)
+        return True
+
     async def _execute_single_ble_attempt(
         self, op: BLEOperationRead | BLEOperationWrite, attempt: int
     ) -> bool | bytearray | None:
@@ -253,15 +272,7 @@ class BasestationDevice(ABC):
                 async with self._client_lock:
                     self._current_client = client
 
-                if isinstance(op, BLEOperationRead):
-                    result = await client.read_gatt_char(op.characteristic_uuid)
-                else:
-                    await client.write_gatt_char(
-                        op.characteristic_uuid,
-                        op.value,
-                        response=not op.without_response,
-                    )
-                    result = True
+                result = await self._perform_ble_operation(client, op)
 
                 self._record_connection_success()
                 # Explicit disconnect to free proxy slots
@@ -490,11 +501,17 @@ class ValveBasestationDevice(BasestationDevice):
             return
 
         result = await self.async_ble_operation(
-            BLEOperationWrite(V2_PWR_CHARACTERISTIC, bytes([BasestationPowerState.STARTING_UP]), without_response=True)
+            BLEOperationWrite(
+                V2_PWR_CHARACTERISTIC,
+                bytes([BasestationPowerState.STARTING_UP]),
+                without_response=True,
+                repeat_count=3,
+                repeat_delay=1.0,
+            )
         )
         if result:
             self._update_power_state(BasestationPowerState.STARTING_UP)
-            self._ignore_reads_until = time.time() + 3.0
+            self._ignore_reads_until = time.time() + 5.0
 
     async def turn_off(self) -> None:
         """Turn off the device."""
@@ -503,11 +520,17 @@ class ValveBasestationDevice(BasestationDevice):
             return
 
         result = await self.async_ble_operation(
-            BLEOperationWrite(V2_PWR_CHARACTERISTIC, bytes([BasestationPowerState.SLEEP]), without_response=True)
+            BLEOperationWrite(
+                V2_PWR_CHARACTERISTIC,
+                bytes([BasestationPowerState.SLEEP]),
+                without_response=True,
+                repeat_count=3,
+                repeat_delay=1.0,
+            )
         )
         if result:
             self._update_power_state(BasestationPowerState.SLEEP)
-            self._ignore_reads_until = time.time() + 3.0
+            self._ignore_reads_until = time.time() + 5.0
 
     async def update(self) -> None:
         """Update the device state."""
@@ -526,16 +549,28 @@ class ValveBasestationDevice(BasestationDevice):
             return
 
         result = await self.async_ble_operation(
-            BLEOperationWrite(V2_PWR_CHARACTERISTIC, bytes([BasestationPowerState.STANDBY]), without_response=True)
+            BLEOperationWrite(
+                V2_PWR_CHARACTERISTIC,
+                bytes([BasestationPowerState.STANDBY]),
+                without_response=True,
+                repeat_count=3,
+                repeat_delay=1.0,
+            )
         )
         if result:
             self._update_power_state(BasestationPowerState.STANDBY)
-            self._ignore_reads_until = time.time() + 3.0
+            self._ignore_reads_until = time.time() + 5.0
 
     async def identify(self) -> None:
         """Make the device blink its LED to identify it."""
         await self.async_ble_operation(
-            BLEOperationWrite(V2_IDENTIFY_CHARACTERISTIC, V2Command.IDENTIFY.value, without_response=True)
+            BLEOperationWrite(
+                V2_IDENTIFY_CHARACTERISTIC,
+                V2Command.IDENTIFY.value,
+                without_response=True,
+                repeat_count=3,
+                repeat_delay=1.0,
+            )
         )
 
     async def _read_specific_info(
@@ -590,7 +625,9 @@ class ViveBasestationDevice(BasestationDevice):
             command[4:8] = struct.pack("<I", int(self.pair_id))
 
             if await self.async_ble_operation(
-                BLEOperationWrite(V1_PWR_CHARACTERISTIC, bytes(command), without_response=True)
+                BLEOperationWrite(
+                    V1_PWR_CHARACTERISTIC, bytes(command), without_response=True, repeat_count=3, repeat_delay=1.0
+                )
             ):
                 self._is_on = True
         except (ValueError, struct.error):
@@ -609,7 +646,9 @@ class ViveBasestationDevice(BasestationDevice):
             command[4:8] = struct.pack("<I", int(self.pair_id))
 
             if await self.async_ble_operation(
-                BLEOperationWrite(V1_PWR_CHARACTERISTIC, bytes(command), without_response=True)
+                BLEOperationWrite(
+                    V1_PWR_CHARACTERISTIC, bytes(command), without_response=True, repeat_count=3, repeat_delay=1.0
+                )
             ):
                 self._is_on = False
         except (ValueError, struct.error):
