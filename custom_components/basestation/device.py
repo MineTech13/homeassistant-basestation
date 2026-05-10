@@ -192,9 +192,7 @@ class BasestationDevice(ABC):
 
     def _should_attempt_connection(self) -> bool:
         """Check if we should attempt a connection."""
-        if self._is_connecting:
-            return False
-        return True
+        return not self._is_connecting
 
     def _record_connection_success(self) -> None:
         self._consecutive_failures = 0
