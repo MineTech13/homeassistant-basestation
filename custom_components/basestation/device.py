@@ -45,10 +45,6 @@ _LOGGER = logging.getLogger(__name__)
 CONNECTION_DELAY = 0.5
 MAX_RETRIES = 2
 INFO_READ_RETRIES = 3
-CONNECTION_COOLDOWN = 5.0
-MAX_CONSECUTIVE_FAILURES = 5
-EXTENDED_COOLDOWN = 30.0
-MIN_FAILURES_FOR_UNAVAILABLE = 3
 STATE_FRESHNESS_THRESHOLD = 10.0
 
 type BaseStationDeviceInfoKey = Literal["firmware", "model", "hardware", "manufacturer", "channel", "pair_id"]
@@ -195,20 +191,10 @@ class BasestationDevice(ABC):
         self._available = False
 
     def _should_attempt_connection(self) -> bool:
-        current_time = time.time()
-
+        """Check if we should attempt a connection."""
         if self._is_connecting:
             return False
-
-        if self._consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
-            required_cooldown = EXTENDED_COOLDOWN
-        elif self._consecutive_failures > 0:
-            required_cooldown = CONNECTION_COOLDOWN * (2 ** (self._consecutive_failures - 1))
-        else:
-            required_cooldown = 0
-
-        time_since_last_attempt = current_time - self._last_connection_attempt
-        return time_since_last_attempt >= required_cooldown
+        return True
 
     def _record_connection_success(self) -> None:
         self._consecutive_failures = 0
@@ -219,8 +205,6 @@ class BasestationDevice(ABC):
     def _record_connection_failure(self) -> None:
         self._consecutive_failures += 1
         self._retry_count += 1
-        if self._consecutive_failures >= MIN_FAILURES_FOR_UNAVAILABLE:
-            self._available = False
 
     def _update_power_state(self, state: int) -> None:
         self._last_power_state = state
@@ -329,8 +313,8 @@ class BasestationDevice(ABC):
                     await asyncio.sleep(CONNECTION_DELAY)
 
             self._record_connection_failure()
-            if self._consecutive_failures == MAX_CONSECUTIVE_FAILURES:
-                _LOGGER.warning("Device %s connection failed repeatedly.", self.mac)
+            if self._consecutive_failures > 0 and self._consecutive_failures % 5 == 0:
+                _LOGGER.debug("Device %s connection failed %d times in a row.", self.mac, self._consecutive_failures)
             return False
 
         finally:
@@ -534,8 +518,14 @@ class ValveBasestationDevice(BasestationDevice):
 
     async def update(self) -> None:
         """Update the device state."""
+        ble_device = self.get_ble_device()
+        self._available = ble_device is not None
+
         # Überspringe BLE Reads kurz nach einem Schreib-Kommando (Gummiband-Effekt beheben)
         if time.time() < self._ignore_reads_until:
+            return
+
+        if not self._available:
             return
 
         value = await self.async_ble_operation(BLEOperationRead(V2_PWR_CHARACTERISTIC))
