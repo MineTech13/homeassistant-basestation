@@ -542,11 +542,13 @@ class ValveBasestationDevice(BasestationDevice):
         if not self._available:
             return
 
-        is_booting = self._last_power_state in (
+        booting_states = (
             BasestationPowerState.STARTING_UP,
             BasestationPowerState.BOOTING_1,
             BasestationPowerState.BOOTING_2,
-        ) or (self._target_power_state is not None)
+        )
+
+        is_booting = self._last_power_state in booting_states or self._target_power_state is not None
 
         value = await self.async_ble_operation(BLEOperationRead(V2_PWR_CHARACTERISTIC, keep_alive=is_booting))
 
@@ -554,22 +556,30 @@ class ValveBasestationDevice(BasestationDevice):
             new_state = value[0]
             current_time = time.time()
 
-            if self._target_power_state is not None and current_time < self._target_state_expires:
-                active_states = (
-                    BasestationPowerState.STARTING_UP,
-                    BasestationPowerState.BOOTING_1,
-                    BasestationPowerState.BOOTING_2,
-                    BasestationPowerState.ON,
-                )
-
-                if new_state == self._target_power_state or (
-                    self._target_power_state in active_states and new_state in active_states
-                ):
+            if self._target_power_state is not None:
+                if current_time >= self._target_state_expires:
                     self._target_power_state = None
                 else:
-                    return
+                    active_states = booting_states + (BasestationPowerState.ON,)
+
+                    if new_state == self._target_power_state or (
+                        self._target_power_state in active_states and new_state in active_states
+                    ):
+                        self._target_power_state = None
+                    else:
+                        return
 
             self._update_power_state(new_state)
+
+            is_stable_now = new_state not in booting_states and self._target_power_state is None
+
+            if is_booting and is_stable_now:
+                try:
+                    async with asyncio.timeout(0.5):
+                        async with self._client_lock:
+                            await self._disconnect_client()
+                except TimeoutError:
+                    pass
 
     async def set_standby(self) -> None:
         """Set the device to standby mode."""
