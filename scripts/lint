@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
 
 set -e
-
 cd "$(dirname "$0")/.."
 
-ruff format .
-ruff check . --fix
-mypy custom_components/basestation
+set +e
+
+exit_code=0
+
+ruff format . || exit_code=1
+ruff check . --fix || exit_code=1
+mypy custom_components/basestation || exit_code=1
+
+exit $exit_code
