@@ -132,6 +132,16 @@ class BasestationDevice(ABC):
         return age < STATE_FRESHNESS_THRESHOLD
 
     @property
+    def cached_info(self) -> dict[BaseStationDeviceInfoKey, str]:
+        """Return the cached device information."""
+        return self._info
+
+    @property
+    def has_cached_info(self) -> bool:
+        """Return True if device info has been successfully read."""
+        return self._device_info_read_success
+
+    @property
     def device_info(self) -> DeviceInfo:
         """Return the device info for the registry."""
         return DeviceInfo(
