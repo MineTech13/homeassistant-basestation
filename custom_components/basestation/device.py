@@ -560,7 +560,7 @@ class ValveBasestationDevice(BasestationDevice):
                 if current_time >= self._target_state_expires:
                     self._target_power_state = None
                 else:
-                    active_states = booting_states + (BasestationPowerState.ON,)
+                    active_states = (*booting_states, BasestationPowerState.ON)
 
                     if new_state == self._target_power_state or (
                         self._target_power_state in active_states and new_state in active_states
