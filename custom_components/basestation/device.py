@@ -494,24 +494,72 @@ class ValveBasestationDevice(BasestationDevice):
         """Return True if device is in standby mode."""
         return self._last_power_state == BasestationPowerState.STANDBY
 
+    async def _execute_verified_command(self, target_command: int, expected_states: tuple[int, ...]) -> None:
+        """Execute a command repeatedly until the expected state is verified."""
+        self._target_power_state = target_command
+        self._target_state_expires = time.time() + 15.0
+
+        self._update_power_state(target_command)
+
+        while time.time() < self._target_state_expires:
+            await self.async_ble_operation(
+                BLEOperationWrite(
+                    V2_PWR_CHARACTERISTIC,
+                    bytes([target_command]),
+                    without_response=True,
+                    repeat_count=2,
+                    repeat_delay=0.5,
+                    keep_alive=True,
+                )
+            )
+
+            await asyncio.sleep(1.5)
+
+            value = await self.async_ble_operation(BLEOperationRead(V2_PWR_CHARACTERISTIC, keep_alive=True))
+
+            if value and len(value) > 0:
+                current_state = value[0]
+                self._update_power_state(current_state)
+
+                if current_state in expected_states:
+                    self._target_power_state = None
+                    is_booting = current_state in (
+                        BasestationPowerState.STARTING_UP,
+                        BasestationPowerState.BOOTING_1,
+                        BasestationPowerState.BOOTING_2,
+                    )
+                    if not is_booting:
+                        try:
+                            async with asyncio.timeout(0.5):
+                                async with self._client_lock:
+                                    await self._disconnect_client()
+                        except TimeoutError:
+                            pass
+                    return
+
+            await asyncio.sleep(1.0)
+
+        self._target_power_state = None
+        try:
+            async with asyncio.timeout(0.5):
+                async with self._client_lock:
+                    await self._disconnect_client()
+        except TimeoutError:
+            pass
+
     async def turn_on(self) -> None:
         """Turn on the device."""
         if self._last_power_state == BasestationPowerState.ON:
             return
 
-        self._target_power_state = BasestationPowerState.STARTING_UP
-        self._target_state_expires = time.time() + 15.0
-        self._update_power_state(BasestationPowerState.STARTING_UP)
-
-        await self.async_ble_operation(
-            BLEOperationWrite(
-                V2_PWR_CHARACTERISTIC,
-                bytes([BasestationPowerState.STARTING_UP]),
-                without_response=True,
-                repeat_count=3,
-                repeat_delay=1.0,
-                keep_alive=True,
-            )
+        await self._execute_verified_command(
+            BasestationPowerState.STARTING_UP,
+            (
+                BasestationPowerState.STARTING_UP,
+                BasestationPowerState.BOOTING_1,
+                BasestationPowerState.BOOTING_2,
+                BasestationPowerState.ON,
+            ),
         )
 
     async def turn_off(self) -> None:
@@ -519,20 +567,14 @@ class ValveBasestationDevice(BasestationDevice):
         if self._last_power_state == BasestationPowerState.SLEEP:
             return
 
-        self._target_power_state = BasestationPowerState.SLEEP
-        self._target_state_expires = time.time() + 15.0
-        self._update_power_state(BasestationPowerState.SLEEP)
+        await self._execute_verified_command(BasestationPowerState.SLEEP, (BasestationPowerState.SLEEP,))
 
-        await self.async_ble_operation(
-            BLEOperationWrite(
-                V2_PWR_CHARACTERISTIC,
-                bytes([BasestationPowerState.SLEEP]),
-                without_response=True,
-                repeat_count=3,
-                repeat_delay=1.0,
-                keep_alive=True,
-            )
-        )
+    async def set_standby(self) -> None:
+        """Set the device to standby mode."""
+        if self._last_power_state == BasestationPowerState.STANDBY:
+            return
+
+        await self._execute_verified_command(BasestationPowerState.STANDBY, (BasestationPowerState.STANDBY,))
 
     async def update(self) -> None:
         """Update the device state."""
@@ -580,26 +622,6 @@ class ValveBasestationDevice(BasestationDevice):
                             await self._disconnect_client()
                 except TimeoutError:
                     pass
-
-    async def set_standby(self) -> None:
-        """Set the device to standby mode."""
-        if self._last_power_state == BasestationPowerState.STANDBY:
-            return
-
-        self._target_power_state = BasestationPowerState.STANDBY
-        self._target_state_expires = time.time() + 15.0
-        self._update_power_state(BasestationPowerState.STANDBY)
-
-        await self.async_ble_operation(
-            BLEOperationWrite(
-                V2_PWR_CHARACTERISTIC,
-                bytes([BasestationPowerState.STANDBY]),
-                without_response=True,
-                repeat_count=3,
-                repeat_delay=1.0,
-                keep_alive=True,
-            )
-        )
 
     async def identify(self) -> None:
         """Make the device blink its LED to identify it."""
