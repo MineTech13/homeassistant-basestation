@@ -519,9 +519,9 @@ class ValveBasestationDevice(BasestationDevice):
 
             if value and len(value) > 0:
                 current_state = value[0]
-                self._update_power_state(current_state)
 
                 if current_state in expected_states:
+                    self._update_power_state(current_state)
                     self._target_power_state = None
                     is_booting = current_state in (
                         BasestationPowerState.STARTING_UP,
