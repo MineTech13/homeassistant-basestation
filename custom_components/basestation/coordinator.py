@@ -98,16 +98,8 @@ class BasestationInfoCoordinator(DataUpdateCoordinator):
             async with asyncio.timeout(timeout):
                 return cast("dict[str, Any]", await self.device.read_device_info(force=True))
         except TimeoutError as err:
-            if self.device.has_cached_info:
-                _LOGGER.debug("Timeout fetching info, using cached data for %s", self.device.mac)
-                return cast("dict[str, Any]", self.device.cached_info)
-
             msg = f"Timeout fetching device info for {self.device.mac}"
             raise UpdateFailed(msg) from err
         except Exception as err:
-            if self.device.has_cached_info:
-                _LOGGER.debug("Error fetching info, using cached data for %s", self.device.mac)
-                return cast("dict[str, Any]", self.device.cached_info)
-
             msg = f"Error fetching device info: {err}"
             raise UpdateFailed(msg) from err
