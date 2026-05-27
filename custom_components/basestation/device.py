@@ -183,6 +183,14 @@ class BasestationDevice(ABC):
         """Get the BLE device from the address."""
         return bluetooth.async_ble_device_from_address(self.hass, self.mac)
 
+    async def _disconnect_client(self) -> None:
+        """Safely disconnect the current BLE client."""
+        if self._current_client:
+            with contextlib.suppress(Exception):
+                if self._current_client.is_connected:
+                    await self._current_client.disconnect()
+            self._current_client = None
+
     async def cleanup(self) -> None:
         """Clean up resources when device is being removed."""
         client_to_disconnect = None
@@ -254,17 +262,32 @@ class BasestationDevice(ABC):
                 result = await self._perform_ble_operation(self._current_client, op)
             except Exception as err:
                 _LOGGER.debug("Failed to reuse connection for %s: %s", self.mac, err)
-                with contextlib.suppress(Exception):
-                    await self._current_client.disconnect()
-                self._current_client = None
+                await self._disconnect_client()
             else:
                 if not op.keep_alive:
-                    await self._current_client.disconnect()
-                    self._current_client = None
+                    await self._disconnect_client()
                     await asyncio.sleep(0.5)
                 return result
 
         return await self._establish_and_perform(op, attempt)
+
+    async def _get_or_create_client(self, device: BLEDevice) -> tuple[BleakClientWithServiceCache, bool]:
+        """Get existing or establish new BLE connection. Returns client and if it was reused."""
+        if self._current_client and self._current_client.is_connected:
+            _LOGGER.debug("Reusing existing BLE connection for %s", self.mac)
+            return self._current_client, True
+
+        async with asyncio.timeout(self.connection_timeout):
+            client = await establish_connection(
+                BleakClientWithServiceCache,
+                device,
+                device.name or device.address,
+                disconnected_callback=self._handle_disconnect,
+                max_attempts=1,
+                use_services_cache=True,
+            )
+        self._current_client = client
+        return client, False
 
     async def _establish_and_perform(
         self, op: BLEOperationRead | BLEOperationWrite, attempt: int
@@ -276,17 +299,7 @@ class BasestationDevice(ABC):
             if not device:
                 return None
 
-            async with asyncio.timeout(self.connection_timeout):
-                client = await establish_connection(
-                    BleakClientWithServiceCache,
-                    device,
-                    device.name or device.address,
-                    disconnected_callback=self._handle_disconnect,
-                    max_attempts=1,
-                    use_services_cache=True,
-                )
-
-            self._current_client = client
+            client, _ = await self._get_or_create_client(device)
             result = await self._perform_ble_operation(client, op)
 
         except BleakError as err:
@@ -298,16 +311,12 @@ class BasestationDevice(ABC):
         else:
             self._record_connection_success()
             if not op.keep_alive:
-                await client.disconnect()
-                self._current_client = None
+                await self._disconnect_client()
                 await asyncio.sleep(0.5)
             return result
         finally:
-            if not op.keep_alive and self._current_client:
-                with contextlib.suppress(Exception):
-                    if self._current_client.is_connected:
-                        await self._current_client.disconnect()
-                self._current_client = None
+            if not op.keep_alive:
+                await self._disconnect_client()
 
         return None
 
@@ -385,25 +394,9 @@ class BasestationDevice(ABC):
 
         info: dict[BaseStationDeviceInfoKey, str] = {}
         client_was_reused = False
-        client = None
 
         try:
-            if self._current_client and self._current_client.is_connected:
-                _LOGGER.debug("Reusing existing BLE connection for info read on %s", self.mac)
-                client = self._current_client
-                client_was_reused = True
-            else:
-                async with asyncio.timeout(self.connection_timeout):
-                    client = await establish_connection(
-                        BleakClientWithServiceCache,
-                        device,
-                        device.name or device.address,
-                        disconnected_callback=self._handle_disconnect,
-                        max_attempts=1,
-                        use_services_cache=True,
-                    )
-                self._current_client = client
-
+            client, client_was_reused = await self._get_or_create_client(device)
             std_success = await self._read_standard_characteristics(client, info)
             spec_success = await self._read_specific_info(client, info)
 
@@ -415,18 +408,14 @@ class BasestationDevice(ABC):
             _LOGGER.exception("Unexpected error reading device info")
         else:
             if not client_was_reused:
-                await client.disconnect()
-                self._current_client = None
+                await self._disconnect_client()
                 await asyncio.sleep(0.5)
 
             if std_success or spec_success:
                 return info
         finally:
-            if not client_was_reused and self._current_client:
-                with contextlib.suppress(Exception):
-                    if self._current_client.is_connected:
-                        await self._current_client.disconnect()
-                self._current_client = None
+            if not client_was_reused:
+                await self._disconnect_client()
 
         return None
 
