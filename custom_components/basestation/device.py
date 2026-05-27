@@ -97,7 +97,6 @@ class BasestationDevice(ABC):
         self._last_device_info_read = 0.0
         self._device_info_read_success = False
 
-        self._is_connecting = False
         self._last_connection_attempt = 0.0
         self._consecutive_failures = 0
         self._last_successful_connection = 0.0
@@ -174,11 +173,22 @@ class BasestationDevice(ABC):
     async def cleanup(self) -> None:
         """Clean up resources when device is being removed."""
         client_to_disconnect = None
+        has_lock = False
 
-        async with self._client_lock:
+        try:
+            async with asyncio.timeout(2.0):
+                await self._client_lock.acquire()
+                has_lock = True
+        except TimeoutError:
+            pass
+
+        try:
             if self._current_client and self._current_client.is_connected:
                 client_to_disconnect = self._current_client
             self._current_client = None
+        finally:
+            if has_lock:
+                self._client_lock.release()
 
         if client_to_disconnect:
             try:
@@ -187,12 +197,7 @@ class BasestationDevice(ABC):
             except (TimeoutError, Exception) as e:
                 _LOGGER.debug("Error disconnecting client during cleanup: %s", e)
 
-        self._is_connecting = False
         self._available = False
-
-    def _should_attempt_connection(self) -> bool:
-        """Check if we should attempt a connection."""
-        return not self._is_connecting
 
     def _record_connection_success(self) -> None:
         self._consecutive_failures = 0
@@ -251,13 +256,10 @@ class BasestationDevice(ABC):
                 )
 
             async with client:
-                async with self._client_lock:
-                    self._current_client = client
-
+                self._current_client = client
                 result = await self._perform_ble_operation(client, op)
 
                 self._record_connection_success()
-                # Explicit disconnect to free proxy slots
                 await client.disconnect()
 
             # Delay to allow BLE Proxy to internally clear the connection slot
@@ -278,6 +280,7 @@ class BasestationDevice(ABC):
                     await asyncio.sleep(0.5)
                 except Exception as err:
                     _LOGGER.debug("Ignored disconnect error: %s", err)
+            self._current_client = None
 
         return None
 
@@ -289,17 +292,17 @@ class BasestationDevice(ABC):
 
     async def async_ble_operation(self, op: BLEOperationRead | BLEOperationWrite) -> bool | bytearray:
         """Execute a BLE operation with proper connection management."""
-        if not self._should_attempt_connection():
+        if self._client_lock.locked():
             return False
 
-        self._last_connection_attempt = time.time()
-
-        async with self._client_lock:
-            if self._is_connecting:
-                return False
-            self._is_connecting = True
+        try:
+            async with asyncio.timeout(0.1):
+                await self._client_lock.acquire()
+        except TimeoutError:
+            return False
 
         try:
+            self._last_connection_attempt = time.time()
             max_attempts = MAX_RETRIES if op.retry else 1
 
             for attempt in range(max_attempts):
@@ -316,9 +319,7 @@ class BasestationDevice(ABC):
             return False
 
         finally:
-            async with self._client_lock:
-                self._is_connecting = False
-                self._current_client = None
+            self._client_lock.release()
 
     def _handle_disconnect(self, _client: BleakClientWithServiceCache) -> None:
         _LOGGER.debug("Device %s disconnected", self.mac)
@@ -372,14 +373,12 @@ class BasestationDevice(ABC):
                 )
 
             async with client:
-                async with self._client_lock:
-                    self._current_client = client
+                self._current_client = client
 
                 std_success = await self._read_standard_characteristics(client, info)
                 spec_success = await self._read_specific_info(client, info)
 
                 if std_success or spec_success:
-                    # Explicit disconnect
                     await client.disconnect()
                     await asyncio.sleep(0.5)
 
@@ -393,7 +392,6 @@ class BasestationDevice(ABC):
             if std_success or spec_success:
                 return info
         finally:
-            # Ensure cleanup in case of failures
             if client and client.is_connected:
                 try:
                     await client.disconnect()
@@ -401,9 +399,7 @@ class BasestationDevice(ABC):
                 except Exception as err:
                     _LOGGER.debug("Ignored disconnect error: %s", err)
 
-            async with self._client_lock:
-                self._is_connecting = False
-                self._current_client = None
+            self._current_client = None
 
         return None
 
@@ -418,29 +414,34 @@ class BasestationDevice(ABC):
         ):
             return self._info
 
-        if not self._should_attempt_connection():
+        if self._client_lock.locked():
             return self._info
 
-        for attempt in range(INFO_READ_RETRIES):
-            if attempt > 0:
-                await asyncio.sleep(CONNECTION_DELAY * (2**attempt))
+        try:
+            async with asyncio.timeout(0.1):
+                await self._client_lock.acquire()
+        except TimeoutError:
+            return self._info
 
-            self._last_connection_attempt = time.time()
-            async with self._client_lock:
-                if self._is_connecting:
-                    return self._info
-                self._is_connecting = True
+        try:
+            for attempt in range(INFO_READ_RETRIES):
+                if attempt > 0:
+                    await asyncio.sleep(CONNECTION_DELAY * (2**attempt))
 
-            info = await self._attempt_device_info_read()
+                self._last_connection_attempt = time.time()
+                info = await self._attempt_device_info_read()
 
-            if info:
-                self._info |= info
-                self._record_connection_success()
-                self._last_device_info_read = current_time
-                self._device_info_read_success = True
-                return info
+                if info:
+                    self._info |= info
+                    self._record_connection_success()
+                    self._last_device_info_read = current_time
+                    self._device_info_read_success = True
+                    return info
 
-            self._record_connection_failure()
+                self._record_connection_failure()
+
+        finally:
+            self._client_lock.release()
 
         return self._info
 
@@ -464,7 +465,8 @@ class ValveBasestationDevice(BasestationDevice):
     ) -> None:
         """Initialize the Valve basestation device."""
         super().__init__(hass, mac, name, connection_timeout, info_scan_interval)
-        self._ignore_reads_until = 0.0
+        self._target_power_state: int | None = None
+        self._target_state_expires = 0.0
 
     @property
     def default_name(self) -> str:
@@ -478,11 +480,14 @@ class ValveBasestationDevice(BasestationDevice):
 
     async def turn_on(self) -> None:
         """Turn on the device."""
-        # Check to avoid redundant commands
         if self._last_power_state == BasestationPowerState.ON:
             return
 
-        result = await self.async_ble_operation(
+        self._target_power_state = BasestationPowerState.STARTING_UP
+        self._target_state_expires = time.time() + 15.0
+        self._update_power_state(BasestationPowerState.STARTING_UP)
+
+        await self.async_ble_operation(
             BLEOperationWrite(
                 V2_PWR_CHARACTERISTIC,
                 bytes([BasestationPowerState.STARTING_UP]),
@@ -491,17 +496,17 @@ class ValveBasestationDevice(BasestationDevice):
                 repeat_delay=1.0,
             )
         )
-        if result:
-            self._update_power_state(BasestationPowerState.STARTING_UP)
-            self._ignore_reads_until = time.time() + 5.0
 
     async def turn_off(self) -> None:
         """Turn off the device."""
-        # Check to avoid redundant commands
         if self._last_power_state == BasestationPowerState.SLEEP:
             return
 
-        result = await self.async_ble_operation(
+        self._target_power_state = BasestationPowerState.SLEEP
+        self._target_state_expires = time.time() + 15.0
+        self._update_power_state(BasestationPowerState.SLEEP)
+
+        await self.async_ble_operation(
             BLEOperationWrite(
                 V2_PWR_CHARACTERISTIC,
                 bytes([BasestationPowerState.SLEEP]),
@@ -510,33 +515,48 @@ class ValveBasestationDevice(BasestationDevice):
                 repeat_delay=1.0,
             )
         )
-        if result:
-            self._update_power_state(BasestationPowerState.SLEEP)
-            self._ignore_reads_until = time.time() + 5.0
 
     async def update(self) -> None:
         """Update the device state."""
         ble_device = self.get_ble_device()
         self._available = ble_device is not None
 
-        # Überspringe BLE Reads kurz nach einem Schreib-Kommando (Gummiband-Effekt beheben)
-        if time.time() < self._ignore_reads_until:
-            return
-
         if not self._available:
             return
 
         value = await self.async_ble_operation(BLEOperationRead(V2_PWR_CHARACTERISTIC))
         if value and len(value) > 0:
-            self._update_power_state(value[0])
+            new_state = value[0]
+            current_time = time.time()
+
+            if self._target_power_state is not None and current_time < self._target_state_expires:
+                active_states = (
+                    BasestationPowerState.STARTING_UP,
+                    BasestationPowerState.BOOTING_1,
+                    BasestationPowerState.BOOTING_2,
+                    BasestationPowerState.ON,
+                )
+
+                # Wenn der angestrebte Status oder ein logischer Folgestatus erreicht wurde
+                if new_state == self._target_power_state or (
+                    self._target_power_state in active_states and new_state in active_states
+                ):
+                    self._target_power_state = None
+                else:
+                    return
+
+            self._update_power_state(new_state)
 
     async def set_standby(self) -> None:
         """Set the device to standby mode."""
-        # Check to avoid redundant commands
         if self._last_power_state == BasestationPowerState.STANDBY:
             return
 
-        result = await self.async_ble_operation(
+        self._target_power_state = BasestationPowerState.STANDBY
+        self._target_state_expires = time.time() + 15.0
+        self._update_power_state(BasestationPowerState.STANDBY)
+
+        await self.async_ble_operation(
             BLEOperationWrite(
                 V2_PWR_CHARACTERISTIC,
                 bytes([BasestationPowerState.STANDBY]),
@@ -545,9 +565,6 @@ class ValveBasestationDevice(BasestationDevice):
                 repeat_delay=1.0,
             )
         )
-        if result:
-            self._update_power_state(BasestationPowerState.STANDBY)
-            self._ignore_reads_until = time.time() + 5.0
 
     async def identify(self) -> None:
         """Make the device blink its LED to identify it."""
