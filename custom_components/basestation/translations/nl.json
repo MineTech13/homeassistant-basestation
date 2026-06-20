@@ -45,12 +45,14 @@
           "name": "Apparaatnaam",
           "info_scan_interval": "Apparaatinfo scan-interval (seconden)",
           "power_state_scan_interval": "Statusupdate interval (seconden)",
+          "fast_polling_interval": "Snel polling-interval tijdens opstarten (seconden)",
           "connection_timeout": "Bluetooth verbindings-timeout (seconden)"
         },
         "data_description": {
           "name": "Aangepaste naam voor dit basestation-apparaat",
           "info_scan_interval": "Hoe vaak apparaatinformatie zoals firmware en model moet worden gelezen (minimaal 300 seconden)",
           "power_state_scan_interval": "Hoe vaak de apparaatstatus moet worden bijgewerkt (minimaal 1 seconde, alleen Valve basestations)",
+          "fast_polling_interval": "Hoe vaak de apparaatstatus moet worden bijgewerkt tijdens de opstartsequentie (minimaal 1 seconde, alleen Valve basestations)",
           "connection_timeout": "Maximale tijd om te wachten op Bluetooth-verbindingen (minimaal 5 seconden)"
         }
       }

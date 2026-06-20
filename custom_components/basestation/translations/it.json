@@ -45,12 +45,14 @@
           "name": "Nome del dispositivo",
           "info_scan_interval": "Intervallo di scansione info dispositivo (secondi)",
           "power_state_scan_interval": "Intervallo di aggiornamento stato (secondi)",
+          "fast_polling_interval": "Intervallo di polling rapido durante l'avvio (secondi)",
           "connection_timeout": "Timeout connessione Bluetooth (secondi)"
         },
         "data_description": {
           "name": "Nome personalizzato per questo dispositivo stazione base",
           "info_scan_interval": "Con quale frequenza leggere le informazioni del dispositivo come firmware e modello (minimo 300 secondi)",
           "power_state_scan_interval": "Con quale frequenza aggiornare lo stato del dispositivo (minimo 1 secondo, solo stazioni base Valve)",
+          "fast_polling_interval": "Con quale frequenza aggiornare lo stato del dispositivo durante la sequenza di avvio (minimo 1 secondo, solo stazioni base Valve)",
           "connection_timeout": "Tempo massimo di attesa per le connessioni Bluetooth (minimo 5 secondi)"
         }
       }
