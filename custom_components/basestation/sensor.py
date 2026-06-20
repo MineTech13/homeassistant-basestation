@@ -85,8 +85,8 @@ class BasestationInfoSensor(CoordinatorEntity, SensorEntity):
         self._key: BaseStationDeviceInfoKey = key
         self._attr_unique_id = f"basestation_{device.mac}_{key}"
         self._attr_has_entity_name = True
-        name, icon = SENSOR_DESCRIPTIONS.get(key, (key.capitalize(), "mdi:information"))
-        self._attr_name = name
+        self._attr_translation_key = key
+        _, icon = SENSOR_DESCRIPTIONS.get(key, (key.capitalize(), "mdi:information"))
         self._attr_icon = icon
         self._attr_entity_category = entity_category
         self._attr_device_info = device.device_info
@@ -108,7 +108,7 @@ class BasestationPowerStateSensor(CoordinatorEntity, SensorEntity):
         self._device = device
         self._attr_unique_id = f"basestation_{device.mac}_power_state"
         self._attr_has_entity_name = True
-        self._attr_name = "Power State"
+        self._attr_translation_key = "power_state"
         self._attr_icon = "mdi:power-settings"
         self._attr_device_info = device.device_info
 

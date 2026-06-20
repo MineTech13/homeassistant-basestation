@@ -93,7 +93,7 @@ class BasestationStandbySwitch(CoordinatorEntity, SwitchEntity):
         self._device = device
         self._attr_unique_id = f"basestation_{device.mac}_standby"
         self._attr_has_entity_name = True
-        self._attr_name = "Standby Mode"
+        self._attr_translation_key = "standby"
         self._attr_icon = "mdi:sleep"
         self._attr_device_info = device.device_info
 

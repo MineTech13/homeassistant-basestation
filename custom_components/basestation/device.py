@@ -303,13 +303,18 @@ class BasestationDevice(ABC):
 
     async def async_ble_operation(self, op: BLEOperationRead | BLEOperationWrite) -> bool | bytearray:
         """Execute a BLE operation with proper connection management."""
-        if self._client_lock.locked():
-            return False
+        lock_timeout = 20.0 if isinstance(op, BLEOperationWrite) else 10.0
 
         try:
-            async with asyncio.timeout(0.1):
+            async with asyncio.timeout(lock_timeout):
                 await self._client_lock.acquire()
         except TimeoutError:
+            _LOGGER.debug(
+                "Timeout (%ss) acquiring lock for BLE operation %s on %s",
+                lock_timeout,
+                "write" if isinstance(op, BLEOperationWrite) else "read",
+                self.mac,
+            )
             return False
 
         try:
@@ -425,13 +430,13 @@ class BasestationDevice(ABC):
         ):
             return self._info
 
-        if self._client_lock.locked():
-            return self._info
+        lock_timeout = 15.0 if not self._device_info_read_success else 5.0
 
         try:
-            async with asyncio.timeout(0.1):
+            async with asyncio.timeout(lock_timeout):
                 await self._client_lock.acquire()
         except TimeoutError:
+            _LOGGER.debug("Timeout (%ss) acquiring lock for reading device info on %s", lock_timeout, self.mac)
             return self._info
 
         try:
