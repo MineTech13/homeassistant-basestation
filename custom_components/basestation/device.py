@@ -182,30 +182,31 @@ class BasestationDevice(ABC):
 
     async def cleanup(self) -> None:
         """Clean up resources when device is being removed."""
-        client_to_disconnect = None
-        has_lock = False
-
+        # Attempt to acquire lock with timeout
+        acquired_lock = False
         try:
             async with asyncio.timeout(2.0):
                 await self._client_lock.acquire()
-                has_lock = True
+                acquired_lock = True
         except TimeoutError:
-            pass
+            _LOGGER.debug("Timeout acquiring lock during cleanup for %s", self.mac)
 
         try:
+            # Disconnect if we have a client connection
+            client_to_disconnect = None
             if self._current_client and self._current_client.is_connected:
                 client_to_disconnect = self._current_client
             self._current_client = None
-        finally:
-            if has_lock:
-                self._client_lock.release()
 
-        if client_to_disconnect:
-            try:
-                async with asyncio.timeout(5.0):
-                    await client_to_disconnect.disconnect()
-            except (TimeoutError, Exception) as e:
-                _LOGGER.debug("Error disconnecting client during cleanup: %s", e)
+            if client_to_disconnect:
+                try:
+                    async with asyncio.timeout(5.0):
+                        await client_to_disconnect.disconnect()
+                except (TimeoutError, Exception) as e:
+                    _LOGGER.debug("Error disconnecting client during cleanup: %s", e)
+        finally:
+            if acquired_lock:
+                self._client_lock.release()
 
         self._available = False
 
@@ -459,7 +460,7 @@ class BasestationDevice(ABC):
     async def _read_specific_info(
         self, client: BleakClientWithServiceCache, info: dict[BaseStationDeviceInfoKey, Any]
     ) -> bool:
-        pass
+        """Read device information specific to a basestation model."""
 
 
 class ValveBasestationDevice(BasestationDevice):
@@ -717,7 +718,15 @@ def get_basestation_device(
 
 
 async def connect_delay(attempt: int) -> None:
-    """Delay based on prior connection attempts."""
+    """
+    Delay based on prior connection attempts.
+
+    Implements exponential backoff for connection retries to reduce load on BLE devices.
+
+    Args:
+        attempt: The retry attempt number (0 for first attempt)
+
+    """
     if attempt > 0:
         await asyncio.sleep(CONNECTION_DELAY * (2**attempt))
     await asyncio.sleep(CONNECTION_DELAY * 0.5)

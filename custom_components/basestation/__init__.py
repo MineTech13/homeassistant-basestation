@@ -64,7 +64,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Initial refresh
         await coordinator.async_config_entry_first_refresh()
 
-        # Info-Refresh nicht blockierend als Hintergrund-Task ausführen
+        # Info-Refresh not blocking as background task
         entry.async_create_background_task(
             hass, info_coordinator.async_request_refresh(), name=f"basestation_info_init_{device.mac}"
         )
