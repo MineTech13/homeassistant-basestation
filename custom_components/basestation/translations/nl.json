@@ -53,13 +53,13 @@
           "info_scan_interval": "Hoe vaak apparaatinformatie zoals firmware en model moet worden gelezen (minimaal 300 seconden)",
           "power_state_scan_interval": "Hoe vaak de apparaatstatus moet worden bijgewerkt (minimaal 1 seconde, alleen Valve basestations)",
           "fast_polling_interval": "Hoe vaak de apparaatstatus moet worden bijgewerkt tijdens de opstartsequentie (minimaal 1 seconde, alleen Valve basestations)",
-          "connection_timeout": "Maximale tijd om te wachten op Bluetooth-verbindingen (minimaal 5 seconden)"
+          "connection_timeout": "Maximale tijd om te wachten op Bluetooth-verbindingen (minimaal 20 seconden)"
         }
       }
     },
     "error": {
       "scan_interval_too_low": "Scan-interval is te laag. Controleer de minimumwaarden.",
-      "timeout_too_low": "Verbindings-timeout is te laag. Het minimum is 5 seconden.",
+      "timeout_too_low": "Verbindings-timeout is te laag. Het minimum is 20 seconden.",
       "invalid_data": "Ongeldige configuratiegegevens verstrekt",
       "unknown": "Er is een onverwachte fout opgetreden bij het opslaan van opties"
     }

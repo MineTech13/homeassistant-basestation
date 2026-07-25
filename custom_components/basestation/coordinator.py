@@ -61,7 +61,14 @@ class BasestationCoordinator(DataUpdateCoordinator):
                 BasestationPowerState.BOOTING_2,
             )
 
-            if self.device.last_power_state in booting_states:
+            # If last_power_state is a booting value but hasn't been confirmed by a read recently,
+            # the device has stopped responding rather than actually still booting - back off to
+            # the normal interval instead of polling at fast_interval forever. "Recently" is scaled
+            # to fast_interval (not a fixed constant) so this stays correct however the user has it
+            # configured.
+            state_age = self.device.last_power_state_age
+            is_state_fresh = state_age is not None and state_age < (self.fast_interval.total_seconds() * 2)
+            if self.device.last_power_state in booting_states and is_state_fresh:
                 self.update_interval = self.fast_interval
             else:
                 self.update_interval = self.default_interval

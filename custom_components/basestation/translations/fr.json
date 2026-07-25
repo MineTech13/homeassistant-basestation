@@ -53,13 +53,13 @@
           "info_scan_interval": "Fréquence de lecture des informations de l'appareil comme le firmware et le modèle (minimum 300 secondes)",
           "power_state_scan_interval": "Fréquence de mise à jour de l'état de l'appareil (minimum 1 seconde, stations de base Valve uniquement)",
           "fast_polling_interval": "Fréquence de mise à jour de l'état de l'appareil pendant la séquence de démarrage (minimum 1 seconde, stations de base Valve uniquement)",
-          "connection_timeout": "Temps maximum d'attente pour les connexions Bluetooth (minimum 5 secondes)"
+          "connection_timeout": "Temps maximum d'attente pour les connexions Bluetooth (minimum 20 secondes)"
         }
       }
     },
     "error": {
       "scan_interval_too_low": "L'intervalle de scan est trop bas. Vérifiez les valeurs minimales.",
-      "timeout_too_low": "Le délai de connexion est trop bas. Le minimum est de 5 secondes.",
+      "timeout_too_low": "Le délai de connexion est trop bas. Le minimum est de 20 secondes.",
       "invalid_data": "Données de configuration invalides fournies",
       "unknown": "Une erreur inattendue s'est produite lors de l'enregistrement des options"
     }

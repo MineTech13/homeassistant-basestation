@@ -53,13 +53,13 @@
           "info_scan_interval": "How often to read device information like firmware and model (minimum 300 seconds)",
           "power_state_scan_interval": "How often to update device state - controls switches, buttons, and sensor (minimum 1 second, Valve basestations only)",
           "fast_polling_interval": "How often to update device state during bootup sequence (minimum 1 second, Valve basestations only)",
-          "connection_timeout": "Maximum time to wait for Bluetooth connections (minimum 5 seconds)"
+          "connection_timeout": "Maximum time to wait for Bluetooth connections (minimum 20 seconds)"
         }
       }
     },
     "error": {
       "scan_interval_too_low": "Scan interval is too low. Check the minimum values.",
-      "timeout_too_low": "Connection timeout is too low. Minimum is 5 seconds.",
+      "timeout_too_low": "Connection timeout is too low. Minimum is 20 seconds.",
       "invalid_data": "Invalid configuration data provided",
       "unknown": "An unexpected error occurred while saving options"
     }

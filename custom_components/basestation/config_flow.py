@@ -27,6 +27,7 @@ from .const import (
     DEVICE_TYPE_V1,
     DEVICE_TYPE_V2,
     DOMAIN,
+    MIN_CONNECTION_TIMEOUT,
     SETUP_MANUAL,
     V1_NAME_PREFIX,
     V2_NAME_PREFIX,
@@ -43,7 +44,6 @@ PAIR_ID_REGEX = r"^(0x)?[0-9A-Fa-f]{1,8}$"
 
 # Constants for validation
 MIN_INFO_SCAN_INTERVAL = 300  # 5 minutes minimum
-MIN_CONNECTION_TIMEOUT = 5  # 5 seconds minimum
 MIN_STATE_SCAN_INTERVAL = 1  # 1 second minimum
 MIN_FAST_POLLING_INTERVAL = 1  # 1 second minimum
 
@@ -271,16 +271,10 @@ class BasestationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 },
             )
 
-        # Convert pair ID string to integer
+        # Convert pair ID string to integer. PAIR_ID_REGEX only accepts hex digits (with an
+        # optional "0x" prefix, which int() already understands), so this is always a hex parse.
         try:
-            if pair_id_str.startswith("0x"):
-                pair_id = int(pair_id_str, 16)
-            else:
-                # Try hex first, then decimal if that fails
-                try:
-                    pair_id = int(pair_id_str, 16)
-                except ValueError:
-                    pair_id = int(pair_id_str)
+            pair_id = int(pair_id_str, 16)
         except ValueError:
             errors[CONF_PAIR_ID] = "invalid_pair_id"
             return self.async_show_form(
@@ -353,8 +347,8 @@ class BasestationOptionsFlow(config_entries.OptionsFlow):
             vol.Required(
                 CONF_CONNECTION_TIMEOUT,
                 default=current_options.get(CONF_CONNECTION_TIMEOUT, DEFAULT_CONNECTION_TIMEOUT),
-                description="BLE connection timeout (seconds, minimum 5)",
-            ): vol.All(vol.Coerce(int), vol.Range(min=5, max=60)),
+                description=f"BLE connection timeout (seconds, minimum {MIN_CONNECTION_TIMEOUT})",
+            ): vol.All(vol.Coerce(int), vol.Range(min=MIN_CONNECTION_TIMEOUT, max=120)),
         }
 
         # Add V2-specific options

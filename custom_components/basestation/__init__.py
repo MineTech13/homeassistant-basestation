@@ -19,6 +19,7 @@ from .const import (
     DEFAULT_INFO_SCAN_INTERVAL,
     DEFAULT_POWER_STATE_SCAN_INTERVAL,
     DOMAIN,
+    MIN_CONNECTION_TIMEOUT,
 )
 from .coordinator import BasestationCoordinator, BasestationInfoCoordinator
 from .device import BasestationDevice, get_basestation_device
@@ -47,13 +48,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     fast_scan_interval = entry.options.get(CONF_FAST_POLLING_INTERVAL, DEFAULT_FAST_POLLING_INTERVAL)
 
     if mac:
+        # max() guards against entries created before MIN_CONNECTION_TIMEOUT was raised, which may
+        # still have a lower value stored from before the options form re-validates it.
+        connection_timeout = max(
+            entry.options.get(CONF_CONNECTION_TIMEOUT, DEFAULT_CONNECTION_TIMEOUT), MIN_CONNECTION_TIMEOUT
+        )
         device = get_basestation_device(
             hass,
             mac,
             name=name,
             device_type=device_type,
             pair_id=pair_id,
-            connection_timeout=entry.options.get(CONF_CONNECTION_TIMEOUT, DEFAULT_CONNECTION_TIMEOUT),
+            connection_timeout=connection_timeout,
             info_scan_interval=info_scan_interval,
         )
 

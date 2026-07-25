@@ -10,7 +10,12 @@ from typing import TYPE_CHECKING, Any, Literal, cast, overload
 from attr import dataclass
 from bleak.backends.device import BLEDevice
 from bleak.exc import BleakError
-from bleak_retry_connector import BleakClientWithServiceCache, establish_connection
+from bleak_retry_connector import (
+    BLEAK_OUT_OF_SLOTS_BACKOFF_TIME,
+    BleakClientWithServiceCache,
+    BleakOutOfConnectionSlotsError,
+    establish_connection,
+)
 from homeassistant.components import bluetooth
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import CONNECTION_BLUETOOTH, DeviceInfo
@@ -45,7 +50,7 @@ _LOGGER = logging.getLogger(__name__)
 CONNECTION_DELAY = 0.5
 MAX_RETRIES = 2
 INFO_READ_RETRIES = 3
-STATE_FRESHNESS_THRESHOLD = 10.0
+UNAVAILABLE_AFTER_CONSECUTIVE_FAILURES = 3
 
 type BaseStationDeviceInfoKey = Literal["firmware", "model", "hardware", "manufacturer", "channel", "pair_id"]
 
@@ -102,6 +107,7 @@ class BasestationDevice(ABC):
         self._last_successful_connection = 0.0
         self._current_client: BleakClientWithServiceCache | None = None
         self._client_lock = asyncio.Lock()
+        self._last_error_out_of_slots = False
 
     @property
     def device_name(self) -> str:
@@ -124,12 +130,11 @@ class BasestationDevice(ABC):
         return self._last_power_state
 
     @property
-    def has_fresh_state(self) -> bool:
-        """Return True if we have a recent power state."""
+    def last_power_state_age(self) -> float | None:
+        """Return seconds since last_power_state was last confirmed by a read, or None if never set."""
         if self._last_power_state is None:
-            return False
-        age = time.time() - self._last_power_state_update
-        return age < STATE_FRESHNESS_THRESHOLD
+            return None
+        return time.time() - self._last_power_state_update
 
     @property
     def cached_info(self) -> dict[BaseStationDeviceInfoKey, str]:
@@ -215,10 +220,13 @@ class BasestationDevice(ABC):
         self._retry_count = 0
         self._available = True
         self._last_successful_connection = time.time()
+        self._last_error_out_of_slots = False
 
     def _record_connection_failure(self) -> None:
         self._consecutive_failures += 1
         self._retry_count += 1
+        if self._consecutive_failures >= UNAVAILABLE_AFTER_CONSECUTIVE_FAILURES:
+            self._available = False
 
     def _update_power_state(self, state: int) -> None:
         self._last_power_state = state
@@ -276,12 +284,8 @@ class BasestationDevice(ABC):
             # Delay to allow BLE Proxy to internally clear the connection slot
             await asyncio.sleep(0.5)
 
-        except BleakError as err:
-            _LOGGER.debug("BLE error on %s: %s", self.mac, str(err))
-        except TimeoutError as err:
-            _LOGGER.debug("Timeout executing BLE op on %s: %s", self.mac, str(err))
-        except Exception:
-            _LOGGER.exception("Unexpected error on %s", self.mac)
+        except Exception as err:
+            self._record_connect_exception(err, "contacting")
         else:
             return result
         finally:
@@ -327,7 +331,8 @@ class BasestationDevice(ABC):
                     return result
 
                 if attempt < max_attempts - 1:
-                    await asyncio.sleep(CONNECTION_DELAY)
+                    delay = BLEAK_OUT_OF_SLOTS_BACKOFF_TIME if self._last_error_out_of_slots else CONNECTION_DELAY
+                    await asyncio.sleep(delay)
 
             self._record_connection_failure()
             if self._consecutive_failures > 0 and self._consecutive_failures % 5 == 0:
@@ -339,6 +344,27 @@ class BasestationDevice(ABC):
 
     def _handle_disconnect(self, _client: BleakClientWithServiceCache) -> None:
         _LOGGER.debug("Device %s disconnected", self.mac)
+
+    def _record_connect_exception(self, err: Exception, context: str) -> None:
+        """Classify a connect/operate exception, log it, and flag out-of-slots for backoff."""
+        if isinstance(err, BleakOutOfConnectionSlotsError):
+            self._last_error_out_of_slots = True
+            _LOGGER.warning(
+                "BLE proxy/adapter out of connection slots while %s %s. Consider adding another "
+                "ESPHome Bluetooth proxy near this device: %s",
+                context,
+                self.mac,
+                err,
+            )
+            return
+
+        self._last_error_out_of_slots = False
+        if isinstance(err, BleakError):
+            _LOGGER.debug("BLE error %s %s: %s", context, self.mac, err)
+        elif isinstance(err, TimeoutError):
+            _LOGGER.debug("Timeout %s %s: %s", context, self.mac, err)
+        else:
+            _LOGGER.exception("Unexpected error %s %s", context, self.mac)
 
     async def _read_standard_characteristics(
         self, client: BleakClientWithServiceCache, info: dict[BaseStationDeviceInfoKey, str]
@@ -398,12 +424,8 @@ class BasestationDevice(ABC):
                     await client.disconnect()
                     await asyncio.sleep(0.5)
 
-        except BleakError as err:
-            _LOGGER.debug("BLE error reading device info: %s", err)
-        except TimeoutError as err:
-            _LOGGER.debug("Timeout reading device info: %s", err)
-        except Exception:
-            _LOGGER.exception("Unexpected error reading device info")
+        except Exception as err:
+            self._record_connect_exception(err, "reading device info for")
         else:
             if std_success or spec_success:
                 return info
@@ -442,7 +464,12 @@ class BasestationDevice(ABC):
         try:
             for attempt in range(INFO_READ_RETRIES):
                 if attempt > 0:
-                    await asyncio.sleep(CONNECTION_DELAY * (2**attempt))
+                    delay = (
+                        BLEAK_OUT_OF_SLOTS_BACKOFF_TIME
+                        if self._last_error_out_of_slots
+                        else CONNECTION_DELAY * (2**attempt)
+                    )
+                    await asyncio.sleep(delay)
 
                 self._last_connection_attempt = time.time()
                 info = await self._attempt_device_info_read()
@@ -535,9 +562,11 @@ class ValveBasestationDevice(BasestationDevice):
     async def update(self) -> None:
         """Update the device state."""
         ble_device = self.get_ble_device()
-        self._available = ble_device is not None
-
-        if not self._available:
+        if ble_device is None:
+            # Not visible at all: definitely unavailable. Otherwise, leave availability to
+            # _record_connection_success/_record_connection_failure below, so a device that is
+            # advertising but repeatedly failing to connect still ends up marked unavailable.
+            self._available = False
             return
 
         value = await self.async_ble_operation(BLEOperationRead(V2_PWR_CHARACTERISTIC))
@@ -679,9 +708,15 @@ class ViveBasestationDevice(BasestationDevice):
 
     async def update(self) -> None:
         """Update the device state."""
+        # V1 has no readable state characteristic, so advertisement visibility is the only signal
+        # available here. Don't let it override a failure-driven unavailable state (see
+        # _record_connection_failure) once repeated command failures have marked us unavailable.
         try:
             ble_device = self.get_ble_device()
-            self._available = ble_device is not None
+            if ble_device is None:
+                self._available = False
+            elif self._consecutive_failures < UNAVAILABLE_AFTER_CONSECUTIVE_FAILURES:
+                self._available = True
         except Exception:
             _LOGGER.exception("Error updating V1 basestation availability")
             self._available = False

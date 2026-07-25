@@ -79,4 +79,11 @@ V2_STATE_DESCRIPTIONS: dict[int, str] = {
 DEFAULT_INFO_SCAN_INTERVAL = 1800  # 30 minutes - for static info sensors
 DEFAULT_POWER_STATE_SCAN_INTERVAL = 60  # 60 seconds - for power state sensor (controls ALL state freshness)
 DEFAULT_FAST_POLLING_INTERVAL = 5  # 5 seconds - for fast polling during boot
-DEFAULT_CONNECTION_TIMEOUT = 10  # 10 seconds - BLE connection timeout
+
+# bleak-retry-connector (which establishes every BLE connection this integration makes) uses its
+# own internal ~20s timeout and only fails through its own backoff/cleanup handling once that
+# fires. A shorter connection_timeout here would mean we cancel the connection attempt ourselves
+# first instead - which a remote BLE proxy may not see as a clean disconnect, leaving it holding a
+# stale connection slot. 20s is therefore a hard floor, not just a suggested minimum.
+MIN_CONNECTION_TIMEOUT = 20
+DEFAULT_CONNECTION_TIMEOUT = 30  # some headroom above MIN_CONNECTION_TIMEOUT
