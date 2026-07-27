@@ -5,13 +5,15 @@ from typing import Any
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, BasestationPowerState
 from .coordinator import BasestationCoordinator
-from .device import BasestationDevice, ValveBasestationDevice
+from .device import BasestationDevice, ValveBasestationDevice, ViveBasestationDevice
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -37,7 +39,7 @@ async def async_setup_entry(
     async_add_entities(entities)
 
 
-class BasestationSwitch(CoordinatorEntity, SwitchEntity):
+class BasestationSwitch(CoordinatorEntity, RestoreEntity, SwitchEntity):
     """Representation of a basestation main power switch."""
 
     def __init__(self, coordinator: BasestationCoordinator, device: BasestationDevice) -> None:
@@ -49,6 +51,17 @@ class BasestationSwitch(CoordinatorEntity, SwitchEntity):
         self._attr_name = None
         self._attr_icon = "mdi:virtual-reality"
         self._attr_device_info = device.device_info
+
+    async def async_added_to_hass(self) -> None:
+        """Restore the last known on/off state for V1 devices, which have no way to read it back."""
+        await super().async_added_to_hass()
+
+        if not isinstance(self._device, ViveBasestationDevice):
+            return
+
+        last_state = await self.async_get_last_state()
+        if last_state is not None and last_state.state in (STATE_ON, STATE_OFF):
+            self._device.restore_is_on(is_on=last_state.state == STATE_ON)
 
     @property
     def available(self) -> bool:

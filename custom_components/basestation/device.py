@@ -52,6 +52,12 @@ MAX_RETRIES = 2
 INFO_READ_RETRIES = 3
 UNAVAILABLE_AFTER_CONSECUTIVE_FAILURES = 3
 
+# V1 has no characteristic to actively read a status from, so unlike V2 its update() poll can't
+# naturally retry/self-heal on its own. Without this, once UNAVAILABLE_AFTER_CONSECUTIVE_FAILURES
+# is hit the device stays unavailable forever, even after it's back in range, until a user happens
+# to send a command that succeeds. This gives it another chance periodically instead.
+UNAVAILABLE_RETRY_COOLDOWN = 300.0
+
 type BaseStationDeviceInfoKey = Literal["firmware", "model", "hardware", "manufacturer", "channel", "pair_id"]
 
 
@@ -104,6 +110,7 @@ class BasestationDevice(ABC):
 
         self._last_connection_attempt = 0.0
         self._consecutive_failures = 0
+        self._last_failure_time = 0.0
         self._last_successful_connection = 0.0
         self._current_client: BleakClientWithServiceCache | None = None
         self._client_lock = asyncio.Lock()
@@ -242,6 +249,7 @@ class BasestationDevice(ABC):
     def _record_connection_failure(self) -> None:
         self._consecutive_failures += 1
         self._retry_count += 1
+        self._last_failure_time = time.time()
         if self._consecutive_failures >= UNAVAILABLE_AFTER_CONSECUTIVE_FAILURES:
             self._available = False
 
@@ -734,9 +742,25 @@ class ViveBasestationDevice(BasestationDevice):
         """Return the default name."""
         return "Vive Basestation"
 
+    def restore_is_on(self, *, is_on: bool) -> None:
+        """
+        Restore the last known on/off state after a restart.
+
+        V1 has no characteristic to read this back from the hardware, so _is_on is only ever our
+        own best guess from the last command we successfully sent - restoring it is strictly
+        better than the fresh-object default of False, which would otherwise make the switch show
+        "off" for a station that's actually on until the user happens to press it.
+        """
+        self._is_on = is_on
+
     async def turn_on(self) -> None:
         """Turn on the device."""
-        if not self.pair_id or self._is_on:
+        # Deliberately not early-returning when _is_on already looks True: unlike V2, that flag is
+        # never confirmed by an actual read, so trusting it as a hard gate risks silently
+        # swallowing a legitimate command whenever it's stale (e.g. right after a restart, before
+        # restore_is_on() runs, or if the station was toggled by something other than this
+        # integration). Sending an on/off command the station is already in is harmless.
+        if not self.pair_id:
             return
 
         try:
@@ -757,7 +781,8 @@ class ViveBasestationDevice(BasestationDevice):
 
     async def turn_off(self) -> None:
         """Turn off the device."""
-        if not self.pair_id or not self._is_on:
+        # See turn_on() for why this doesn't early-return based on _is_on.
+        if not self.pair_id:
             return
 
         try:
@@ -779,14 +804,24 @@ class ViveBasestationDevice(BasestationDevice):
     async def update(self) -> None:
         """Update the device state."""
         # V1 has no readable state characteristic, so advertisement visibility is the only signal
-        # available here. Don't let it override a failure-driven unavailable state (see
-        # _record_connection_failure) once repeated command failures have marked us unavailable.
+        # available here - this never performs an actual BLE operation, unlike V2's update(), so
+        # unlike V2 it can't self-heal by simply succeeding on the next poll. Once
+        # _record_connection_failure has marked us unavailable, only give it another chance after
+        # UNAVAILABLE_RETRY_COOLDOWN has passed since the last failure, rather than requiring a
+        # user to happen to send a command that succeeds - otherwise a station that came back into
+        # range would stay marked unavailable indefinitely.
         try:
             ble_device = self.get_ble_device()
             if ble_device is None:
                 self._available = False
-            elif self._consecutive_failures < UNAVAILABLE_AFTER_CONSECUTIVE_FAILURES:
-                self._available = True
+                return
+
+            if self._consecutive_failures >= UNAVAILABLE_AFTER_CONSECUTIVE_FAILURES:
+                if time.time() - self._last_failure_time < UNAVAILABLE_RETRY_COOLDOWN:
+                    return
+                self._consecutive_failures = 0
+
+            self._available = True
         except Exception:
             _LOGGER.exception("Error updating V1 basestation availability")
             self._available = False
