@@ -3,6 +3,7 @@
 [![GitHub Release](https://img.shields.io/github/v/release/MineTech13/homeassistant-basestation?style=for-the-badge)](https://github.com/MineTech13/homeassistant-basestation/releases)
 [![HACS](https://img.shields.io/badge/HACS-Default-orange.svg?style=for-the-badge)](https://github.com/hacs/integration)
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.2+-blue.svg?style=for-the-badge)](https://home-assistant.io)
+[![License](https://img.shields.io/github/license/MineTech13/homeassistant-basestation?style=for-the-badge)](LICENSE)
 
 A comprehensive Home Assistant integration for managing **Valve Index® Base Stations (V2)** and **HTC Vive Base Stations (V1)** ([UNTESTED](https://github.com/MineTech13/homeassistant-basestation/issues/4)) through Bluetooth Low Energy (BLE). Control power states, monitor device information, and automate your VR setup with ease.
 
@@ -227,8 +228,16 @@ Transform your VR setup with smart automations:
 - **[@Azelphur](https://github.com/Azelphur)** - Patches and compatibility fixes
 
 ### Technical References
-- **[jeroen1602/lighthouse_pm](https://github.com/jeroen1602/lighthouse_pm)** - BLE protocol reference
+- **[jeroen1602/lighthouse_pm](https://github.com/jeroen1602/lighthouse_pm)** (GPLv3) - BLE protocol reference, including the V1 (Vive) pairing/power command structure
 - **[Home Assistant Community](https://community.home-assistant.io)** - Testing, feedback, and feature requests
+
+---
+
+## 📄 License
+
+This project is licensed under the **GNU General Public License v3.0 (or later)** - see [LICENSE](LICENSE) for the full text.
+
+Copyright (C) 2026 MineTech13 and contributors.
 
 ---
 
