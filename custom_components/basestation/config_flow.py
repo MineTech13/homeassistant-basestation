@@ -319,35 +319,51 @@ class BasestationOptionsFlow(config_entries.OptionsFlow):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            # Validate scan intervals
-            if user_input.get(CONF_INFO_SCAN_INTERVAL, 0) < MIN_INFO_SCAN_INTERVAL:
+            # Fields are vol.Optional with no default (see schema_dict below), so a value only
+            # shows up here at all if the user actually entered one - a field they left blank to
+            # keep tracking the integration's default is genuinely absent, not "0" or some other
+            # sentinel. Some frontend widgets send an explicit None for a cleared field instead of
+            # omitting the key outright, so normalize that away first too.
+            user_input = {key: value for key, value in user_input.items() if value is not None}
+
+            if CONF_INFO_SCAN_INTERVAL in user_input and user_input[CONF_INFO_SCAN_INTERVAL] < MIN_INFO_SCAN_INTERVAL:
                 errors[CONF_INFO_SCAN_INTERVAL] = "scan_interval_too_low"
-            if user_input.get(CONF_POWER_STATE_SCAN_INTERVAL, 0) < MIN_STATE_SCAN_INTERVAL:
+            if (
+                CONF_POWER_STATE_SCAN_INTERVAL in user_input
+                and user_input[CONF_POWER_STATE_SCAN_INTERVAL] < MIN_STATE_SCAN_INTERVAL
+            ):
                 errors[CONF_POWER_STATE_SCAN_INTERVAL] = "scan_interval_too_low"
-            if user_input.get(CONF_FAST_POLLING_INTERVAL, 0) < MIN_FAST_POLLING_INTERVAL:
+            if (
+                CONF_FAST_POLLING_INTERVAL in user_input
+                and user_input[CONF_FAST_POLLING_INTERVAL] < MIN_FAST_POLLING_INTERVAL
+            ):
                 errors[CONF_FAST_POLLING_INTERVAL] = "scan_interval_too_low"
-            if user_input.get(CONF_CONNECTION_TIMEOUT, 0) < MIN_CONNECTION_TIMEOUT:
+            if CONF_CONNECTION_TIMEOUT in user_input and user_input[CONF_CONNECTION_TIMEOUT] < MIN_CONNECTION_TIMEOUT:
                 errors[CONF_CONNECTION_TIMEOUT] = "timeout_too_low"
 
             if not errors:
-                # Update the config entry with new options
                 return self.async_create_entry(title="", data=user_input)
 
-        # Get current options or set defaults
+        # Get current options
         current_options = self._config_entry.options
         device_type = self._config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_V2)
 
-        # Build the schema based on device type
+        # vol.Optional + suggested_value (instead of vol.Required + default) so a field the user
+        # never customized renders blank, and - if left blank - is genuinely omitted from what
+        # gets saved rather than getting permanently pinned to whatever the current default
+        # happens to be. That's what lets a later release's default change actually reach an entry
+        # that never explicitly overrode that particular field, even if the user did customize
+        # some other field on this same form. current_options.get(key) is None for an
+        # unset/tracking-default field, which the frontend renders as an empty box rather than
+        # suggesting a value.
         schema_dict = {
-            vol.Required(
+            vol.Optional(
                 CONF_INFO_SCAN_INTERVAL,
-                default=current_options.get(CONF_INFO_SCAN_INTERVAL, DEFAULT_INFO_SCAN_INTERVAL),
-                description="How often to scan for device info (seconds, minimum 300)",
+                description={"suggested_value": current_options.get(CONF_INFO_SCAN_INTERVAL)},
             ): vol.All(vol.Coerce(int), vol.Range(min=300, max=86400)),
-            vol.Required(
+            vol.Optional(
                 CONF_CONNECTION_TIMEOUT,
-                default=current_options.get(CONF_CONNECTION_TIMEOUT, DEFAULT_CONNECTION_TIMEOUT),
-                description=f"BLE connection timeout (seconds, minimum {MIN_CONNECTION_TIMEOUT})",
+                description={"suggested_value": current_options.get(CONF_CONNECTION_TIMEOUT)},
             ): vol.All(vol.Coerce(int), vol.Range(min=MIN_CONNECTION_TIMEOUT, max=120)),
         }
 
@@ -355,15 +371,13 @@ class BasestationOptionsFlow(config_entries.OptionsFlow):
         if device_type == DEVICE_TYPE_V2:
             schema_dict.update(
                 {
-                    vol.Required(
+                    vol.Optional(
                         CONF_POWER_STATE_SCAN_INTERVAL,
-                        default=current_options.get(CONF_POWER_STATE_SCAN_INTERVAL, DEFAULT_POWER_STATE_SCAN_INTERVAL),
-                        description="How often to update device state (seconds, minimum 1)",
+                        description={"suggested_value": current_options.get(CONF_POWER_STATE_SCAN_INTERVAL)},
                     ): vol.All(vol.Coerce(int), vol.Range(min=1, max=300)),
-                    vol.Required(
+                    vol.Optional(
                         CONF_FAST_POLLING_INTERVAL,
-                        default=current_options.get(CONF_FAST_POLLING_INTERVAL, DEFAULT_FAST_POLLING_INTERVAL),
-                        description="Fast polling interval during boot (seconds, minimum 1)",
+                        description={"suggested_value": current_options.get(CONF_FAST_POLLING_INTERVAL)},
                     ): vol.All(vol.Coerce(int), vol.Range(min=1, max=60)),
                 }
             )
@@ -372,8 +386,15 @@ class BasestationOptionsFlow(config_entries.OptionsFlow):
             step_id="device_options",
             data_schema=vol.Schema(schema_dict),
             errors=errors,
+            # These fill {tokens} in data_description too, not just the step description above -
+            # that's how the blank/default fields still show the user what value they'd actually
+            # get without it being baked into the field itself.
             description_placeholders={
                 "device_name": self._config_entry.title,
                 "device_type": "Valve Basestation (V2)" if device_type == DEVICE_TYPE_V2 else "Vive Basestation (V1)",
+                "default_info_scan_interval": str(DEFAULT_INFO_SCAN_INTERVAL),
+                "default_connection_timeout": str(DEFAULT_CONNECTION_TIMEOUT),
+                "default_power_state_scan_interval": str(DEFAULT_POWER_STATE_SCAN_INTERVAL),
+                "default_fast_polling_interval": str(DEFAULT_FAST_POLLING_INTERVAL),
             },
         )
