@@ -109,6 +109,11 @@ class BasestationDevice(ABC):
         self._client_lock = asyncio.Lock()
         self._last_error_out_of_slots = False
 
+        # Tracks an in-flight establish_connection() call that outlives our own willingness to
+        # wait for it - see _await_connection().
+        self._pending_connect_task: asyncio.Task[BleakClientWithServiceCache] | None = None
+        self._pending_connect_waiters = 0
+
     @property
     def device_name(self) -> str:
         """Return the name of the device."""
@@ -213,6 +218,18 @@ class BasestationDevice(ABC):
             if acquired_lock:
                 self._client_lock.release()
 
+        # A connect attempt from a just-abandoned poll may still be running in the background (see
+        # _await_connection) - give it a short grace period to finish and be reaped by
+        # _on_connect_task_done rather than tearing the entry down while it's still in flight. Not
+        # cancelling it even here: if it doesn't finish in time, it'll still get closed by
+        # _on_connect_task_done whenever it does, just without this method waiting around for it.
+        if (task := self._pending_connect_task) and not task.done():
+            try:
+                async with asyncio.timeout(5.0):
+                    await asyncio.shield(task)
+            except Exception as e:
+                _LOGGER.debug("Pending connect for %s did not finish during cleanup: %s", self.mac, e)
+
         self._available = False
 
     def _record_connection_success(self) -> None:
@@ -264,15 +281,7 @@ class BasestationDevice(ABC):
             if not device:
                 return None
 
-            async with asyncio.timeout(self.connection_timeout):
-                client = await establish_connection(
-                    BleakClientWithServiceCache,
-                    device,
-                    device.name or device.address,
-                    disconnected_callback=self._handle_disconnect,
-                    max_attempts=1,
-                    use_services_cache=True,
-                )
+            client = await asyncio.wait_for(self._await_connection(device), timeout=self.connection_timeout)
 
             async with client:
                 self._current_client = client
@@ -298,6 +307,75 @@ class BasestationDevice(ABC):
             self._current_client = None
 
         return None
+
+    async def _await_connection(self, device: BLEDevice) -> BleakClientWithServiceCache:
+        """
+        Wait for a connected client without ever cancelling the underlying connect attempt.
+
+        establish_connection() has its own careful cleanup/backoff for a slow or misbehaving BLE
+        proxy (see bleak_retry_connector's BLEAK_SAFETY_TIMEOUT), but that logic only runs if it's
+        allowed to finish naturally - CancelledError isn't one of the exceptions its retry loop
+        catches, so cancelling it from outside (e.g. because our own connection_timeout elapsed)
+        skips that cleanup entirely and can leave an ESPHome proxy holding a connection slot
+        forever, regardless of how generous the timeout is. So the connect itself is shielded:
+        giving up here only stops us *waiting* for it, never the attempt itself. If another
+        attempt (or the next poll cycle) comes looking for a connection before this one resolves,
+        it reuses this same in-flight task instead of racing a second, competing connection to the
+        same device. Whatever happens if nobody ends up waiting for it is handled by
+        _on_connect_task_done/_close_abandoned_client.
+        """
+        task = self._pending_connect_task
+        if task is None or task.done():
+            task = self.hass.async_create_background_task(
+                establish_connection(
+                    BleakClientWithServiceCache,
+                    device,
+                    device.name or device.address,
+                    disconnected_callback=self._handle_disconnect,
+                    max_attempts=1,
+                    use_services_cache=True,
+                ),
+                name=f"basestation_connect_{self.mac}",
+            )
+            task.add_done_callback(self._on_connect_task_done)
+            self._pending_connect_task = task
+
+        self._pending_connect_waiters += 1
+        try:
+            return await asyncio.shield(task)
+        finally:
+            self._pending_connect_waiters -= 1
+
+    def _on_connect_task_done(self, task: asyncio.Task[BleakClientWithServiceCache]) -> None:
+        """
+        Handle a connect attempt that finished after everyone waiting on it already gave up.
+
+        If it succeeded, we now own a live connection nobody asked for anymore - close it right
+        away so it can't sit there occupying a proxy slot. If it failed, establish_connection()
+        already ran its own cleanup before raising, so there's nothing left to do.
+        """
+        if self._pending_connect_task is task:
+            self._pending_connect_task = None
+
+        if self._pending_connect_waiters > 0:
+            return
+
+        try:
+            client = task.result()
+        except (Exception, asyncio.CancelledError):
+            return
+
+        self.hass.async_create_background_task(
+            self._close_abandoned_client(client), name=f"basestation_close_abandoned_{self.mac}"
+        )
+
+    async def _close_abandoned_client(self, client: BleakClientWithServiceCache) -> None:
+        """Disconnect a client that only finished connecting after we stopped waiting for it."""
+        try:
+            if client.is_connected:
+                await client.disconnect()
+        except Exception as err:
+            _LOGGER.debug("Error disconnecting abandoned client for %s: %s", self.mac, err)
 
     @overload
     async def async_ble_operation(self, op: BLEOperationRead) -> bytearray | Literal[False]: ...
@@ -404,15 +482,7 @@ class BasestationDevice(ABC):
         spec_success = False
 
         try:
-            async with asyncio.timeout(self.connection_timeout):
-                client = await establish_connection(
-                    BleakClientWithServiceCache,
-                    device,
-                    device.name or device.address,
-                    disconnected_callback=self._handle_disconnect,
-                    max_attempts=1,
-                    use_services_cache=True,
-                )
+            client = await asyncio.wait_for(self._await_connection(device), timeout=self.connection_timeout)
 
             async with client:
                 self._current_client = client

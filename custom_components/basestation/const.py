@@ -80,10 +80,11 @@ DEFAULT_INFO_SCAN_INTERVAL = 1800  # 30 minutes - for static info sensors
 DEFAULT_POWER_STATE_SCAN_INTERVAL = 60  # 60 seconds - for power state sensor (controls ALL state freshness)
 DEFAULT_FAST_POLLING_INTERVAL = 5  # 5 seconds - for fast polling during boot
 
-# bleak-retry-connector (which establishes every BLE connection this integration makes) uses its
-# own internal ~20s timeout and only fails through its own backoff/cleanup handling once that
-# fires. A shorter connection_timeout here would mean we cancel the connection attempt ourselves
-# first instead - which a remote BLE proxy may not see as a clean disconnect, leaving it holding a
-# stale connection slot. 20s is therefore a hard floor, not just a suggested minimum.
-MIN_CONNECTION_TIMEOUT = 20
-DEFAULT_CONNECTION_TIMEOUT = 30  # some headroom above MIN_CONNECTION_TIMEOUT
+# device.py never cancels an in-flight establish_connection() call itself (see
+# BasestationDevice._await_connection) - connection_timeout only controls how long we wait for one
+# before giving up and letting it keep running in the background, so a stale ESPHome proxy slot can
+# no longer be caused by this value being too low. It's a pure responsiveness knob now: how long a
+# poll cycle waits on a slow connect before trying again (or reporting unavailable) rather than a
+# safety floor.
+MIN_CONNECTION_TIMEOUT = 10
+DEFAULT_CONNECTION_TIMEOUT = 20  # some headroom above MIN_CONNECTION_TIMEOUT
