@@ -50,16 +50,16 @@
         },
         "data_description": {
           "name": "Nombre personalizado para este dispositivo de estación base",
-          "info_scan_interval": "Con qué frecuencia leer la información del dispositivo como firmware y modelo (mínimo 300 segundos)",
-          "power_state_scan_interval": "Con qué frecuencia actualizar el estado del dispositivo (mínimo 1 segundo, solo estaciones base Valve)",
-          "fast_polling_interval": "Con qué frecuencia actualizar el estado del dispositivo durante la secuencia de arranque (mínimo 1 segundo, solo estaciones base Valve)",
-          "connection_timeout": "Tiempo máximo de espera para conexiones Bluetooth (mínimo 20 segundos)"
+          "info_scan_interval": "Con qué frecuencia leer la información del dispositivo como firmware y modelo (mínimo 300 segundos). Déjelo en blanco para usar el valor predeterminado ({default_info_scan_interval} segundos).",
+          "power_state_scan_interval": "Con qué frecuencia actualizar el estado del dispositivo (mínimo 1 segundo, solo estaciones base Valve). Déjelo en blanco para usar el valor predeterminado ({default_power_state_scan_interval} segundos).",
+          "fast_polling_interval": "Con qué frecuencia actualizar el estado del dispositivo durante la secuencia de arranque (mínimo 1 segundo, solo estaciones base Valve). Déjelo en blanco para usar el valor predeterminado ({default_fast_polling_interval} segundos).",
+          "connection_timeout": "Tiempo máximo de espera para conexiones Bluetooth (mínimo 10 segundos). Déjelo en blanco para usar el valor predeterminado ({default_connection_timeout} segundos)."
         }
       }
     },
     "error": {
       "scan_interval_too_low": "El intervalo de escaneo es demasiado bajo. Verifique los valores mínimos.",
-      "timeout_too_low": "El tiempo de espera de conexión es demasiado bajo. El mínimo es 20 segundos.",
+      "timeout_too_low": "El tiempo de espera de conexión es demasiado bajo. El mínimo es 10 segundos.",
       "invalid_data": "Datos de configuración no válidos proporcionados",
       "unknown": "Ocurrió un error inesperado al guardar las opciones"
     }

@@ -50,16 +50,16 @@
         },
         "data_description": {
           "name": "Aangepaste naam voor dit basestation-apparaat",
-          "info_scan_interval": "Hoe vaak apparaatinformatie zoals firmware en model moet worden gelezen (minimaal 300 seconden)",
-          "power_state_scan_interval": "Hoe vaak de apparaatstatus moet worden bijgewerkt (minimaal 1 seconde, alleen Valve basestations)",
-          "fast_polling_interval": "Hoe vaak de apparaatstatus moet worden bijgewerkt tijdens de opstartsequentie (minimaal 1 seconde, alleen Valve basestations)",
-          "connection_timeout": "Maximale tijd om te wachten op Bluetooth-verbindingen (minimaal 20 seconden)"
+          "info_scan_interval": "Hoe vaak apparaatinformatie zoals firmware en model moet worden gelezen (minimaal 300 seconden). Laat leeg om de standaardwaarde te gebruiken ({default_info_scan_interval} seconden).",
+          "power_state_scan_interval": "Hoe vaak de apparaatstatus moet worden bijgewerkt (minimaal 1 seconde, alleen Valve basestations). Laat leeg om de standaardwaarde te gebruiken ({default_power_state_scan_interval} seconden).",
+          "fast_polling_interval": "Hoe vaak de apparaatstatus moet worden bijgewerkt tijdens de opstartsequentie (minimaal 1 seconde, alleen Valve basestations). Laat leeg om de standaardwaarde te gebruiken ({default_fast_polling_interval} seconden).",
+          "connection_timeout": "Maximale tijd om te wachten op Bluetooth-verbindingen (minimaal 10 seconden). Laat leeg om de standaardwaarde te gebruiken ({default_connection_timeout} seconden)."
         }
       }
     },
     "error": {
       "scan_interval_too_low": "Scan-interval is te laag. Controleer de minimumwaarden.",
-      "timeout_too_low": "Verbindings-timeout is te laag. Het minimum is 20 seconden.",
+      "timeout_too_low": "Verbindings-timeout is te laag. Het minimum is 10 seconden.",
       "invalid_data": "Ongeldige configuratiegegevens verstrekt",
       "unknown": "Er is een onverwachte fout opgetreden bij het opslaan van opties"
     }
