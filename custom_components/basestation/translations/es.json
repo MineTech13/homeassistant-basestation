@@ -91,6 +91,24 @@
       },
       "power_state": {
         "name": "Estado de energía"
+      },
+      "connection_failures": {
+        "name": "Fallos de conexión"
+      },
+      "abandoned_connects": {
+        "name": "Intentos de conexión abandonados"
+      },
+      "stranded_slots": {
+        "name": "Ranuras de proxy posiblemente bloqueadas"
+      },
+      "out_of_slots_errors": {
+        "name": "Errores por falta de ranuras de conexión"
+      },
+      "last_connection_error": {
+        "name": "Último error de conexión"
+      },
+      "last_successful_connection": {
+        "name": "Última conexión correcta"
       }
     },
     "switch": {

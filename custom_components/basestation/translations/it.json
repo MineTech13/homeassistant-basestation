@@ -91,6 +91,24 @@
       },
       "power_state": {
         "name": "Stato alimentazione"
+      },
+      "connection_failures": {
+        "name": "Errori di connessione"
+      },
+      "abandoned_connects": {
+        "name": "Tentativi di connessione abbandonati"
+      },
+      "stranded_slots": {
+        "name": "Slot del proxy probabilmente bloccati"
+      },
+      "out_of_slots_errors": {
+        "name": "Errori per slot di connessione esauriti"
+      },
+      "last_connection_error": {
+        "name": "Ultimo errore di connessione"
+      },
+      "last_successful_connection": {
+        "name": "Ultima connessione riuscita"
       }
     },
     "switch": {

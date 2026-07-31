@@ -37,7 +37,8 @@ are banned by `flake8-import-conventions` (use `homeassistant.util.dt` instead, 
 **Flow:** `config_flow.py` (discovery/manual setup) → `device.py` (`get_basestation_device()` picks
 `ValveBasestationDevice` or `ViveBasestationDevice` by name prefix / explicit type) → `__init__.py` wires the
 device into two `DataUpdateCoordinator`s (`coordinator.py`) → `switch.py`/`sensor.py`/`button.py` render
-coordinator data as entities via `CoordinatorEntity`.
+coordinator data as entities via `CoordinatorEntity`. `connection_log.py` (in-memory BLE event history) and
+`diagnostics.py` (downloadable snapshot) are observability only — nothing reads them for control flow.
 
 **Two coordinators per device**, both created in `async_setup_entry`:
 - `BasestationCoordinator` — polls power state at `power_state_scan_interval` (default 60s). Switches to
@@ -115,6 +116,37 @@ call from cancellation, but if this class of bug resurfaces, check first whether
 it, and whether disconnects on the read/write path (after a successful connect, inside
 `_execute_single_ble_attempt`/`_attempt_device_info_read`) can themselves still be cancelled mid-disconnect
 by an enclosing timeout — that path isn't shielded the same way, only the initial connect is.
+
+**Status as of 2026-07-31:** running the shield-based fix for several days is a large improvement (no more
+cascading multi-station deadlock), but one station was still seen wedged with a single blocked slot. The
+cause of that one is unknown — logging was at INFO, where nothing on the failure path was visible. The
+instrumentation below was added specifically to catch it next time; the unshielded-disconnect theory above
+is *deliberately not fixed yet*, so that the next occurrence either confirms or eliminates it.
+
+### Diagnosing it next time
+
+`connection_log.py` keeps per-device counters and a rolling window of noteworthy BLE events in memory —
+deliberately stdlib-only, no HA/bleak imports. Two sizing decisions there matter and should not be undone
+casually: routine successes are counted but not stored (`record(..., store=False)`), and repeats are
+collapsed against a short lookback window (`COLLAPSE_WINDOW`) rather than only the previous event, because
+one failing poll emits several *interleaved* events. Without both, a 50-entry buffer is exhausted in well
+under an hour and the events that explain a failure are the ones evicted.
+
+- **`diagnostics.py`** — device page → Download diagnostics. Counters, event history, whether a connect is
+  still in flight and for how long, what holds the client lock, and which proxy sees the device
+  (`async_scanner_devices_by_address`). Ask the user for this first; it needs no prior log configuration.
+  Counters reset on entry reload, so it must be grabbed before reloading.
+- **The number that settles the open question above** is `suspected_stranded_slots` (=
+  `disconnect_cancelled + abandoned_close_failed`). If it climbs when a station goes unavailable, the
+  unshielded disconnect path is implicated and shielding it is the fix. If it stays 0, look elsewhere.
+- **Log levels**: availability transitions (with reason, consecutive failures, last error, in-flight
+  connect age), lock acquisition timeouts (with what holds the lock and for how long), a connect still
+  in flight after `PENDING_CONNECT_WARN_AGE`, and any disconnect that was cancelled or left a connection
+  open are all WARNING now. Everything else stayed DEBUG. Transitions are logged on change only, so this
+  is self-limiting rather than per-poll noise.
+- Six connection-health sensors exist, `entity_registry_enabled_default = False`. Enabled, the recorder
+  keeps their history for days — far longer than the logs — which is how a slow degradation gets spotted
+  after the fact.
 
 ## Conventions
 

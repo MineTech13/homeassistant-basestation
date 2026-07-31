@@ -91,6 +91,24 @@
       },
       "power_state": {
         "name": "Stroomstatus"
+      },
+      "connection_failures": {
+        "name": "Verbindingsfouten"
+      },
+      "abandoned_connects": {
+        "name": "Afgebroken verbindingspogingen"
+      },
+      "stranded_slots": {
+        "name": "Vermoedelijk geblokkeerde proxy-slots"
+      },
+      "out_of_slots_errors": {
+        "name": "Fouten door gebrek aan verbindingsslots"
+      },
+      "last_connection_error": {
+        "name": "Laatste verbindingsfout"
+      },
+      "last_successful_connection": {
+        "name": "Laatste geslaagde verbinding"
       }
     },
     "switch": {

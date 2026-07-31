@@ -91,6 +91,24 @@
       },
       "power_state": {
         "name": "Power State"
+      },
+      "connection_failures": {
+        "name": "Connection failures"
+      },
+      "abandoned_connects": {
+        "name": "Abandoned connection attempts"
+      },
+      "stranded_slots": {
+        "name": "Suspected stranded proxy slots"
+      },
+      "out_of_slots_errors": {
+        "name": "Out of connection slots errors"
+      },
+      "last_connection_error": {
+        "name": "Last connection error"
+      },
+      "last_successful_connection": {
+        "name": "Last successful connection"
       }
     },
     "switch": {

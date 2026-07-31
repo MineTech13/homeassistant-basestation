@@ -20,6 +20,7 @@ from homeassistant.components import bluetooth
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import CONNECTION_BLUETOOTH, DeviceInfo
 
+from .connection_log import ConnectionLog, Outcome, Phase
 from .const import (
     DEFAULT_CONNECTION_TIMEOUT,
     DEFAULT_INFO_SCAN_INTERVAL,
@@ -57,6 +58,18 @@ UNAVAILABLE_AFTER_CONSECUTIVE_FAILURES = 3
 # is hit the device stays unavailable forever, even after it's back in range, until a user happens
 # to send a command that succeeds. This gives it another chance periodically instead.
 UNAVAILABLE_RETRY_COOLDOWN = 300.0
+
+# A connect attempt we've stopped waiting for is normal and harmless (see _await_connection), but
+# one still running this long afterwards is not: establish_connection() only stays busy that long
+# under sustained proxy congestion, and it's holding (or repeatedly grabbing) a slot the whole
+# time. Warn once per attempt when it crosses this, since it's the earliest visible symptom of the
+# proxy slot problem - well before the device is marked unavailable.
+PENDING_CONNECT_WARN_AGE = 90.0
+
+# How long a single BLE operation may hold the per-device client lock before we treat the holder
+# as stuck rather than merely slow. Comfortably above a worst-case retrying operation
+# (MAX_RETRIES attempts, each up to connection_timeout plus backoff) at default settings.
+LOCK_HELD_WARN_AGE = 120.0
 
 type BaseStationDeviceInfoKey = Literal["firmware", "model", "hardware", "manufacturer", "channel", "pair_id"]
 
@@ -120,6 +133,14 @@ class BasestationDevice(ABC):
         # wait for it - see _await_connection().
         self._pending_connect_task: asyncio.Task[BleakClientWithServiceCache] | None = None
         self._pending_connect_waiters = 0
+        self._pending_connect_started = 0.0
+        self._pending_connect_warned = False
+
+        # Observability only - never consulted for control flow. See connection_log.py for why
+        # this is kept in memory rather than relying on the log.
+        self.connection_log = ConnectionLog()
+        self._lock_acquired_at = 0.0
+        self._lock_holder: str | None = None
 
     @property
     def device_name(self) -> str:
@@ -147,6 +168,36 @@ class BasestationDevice(ABC):
         if self._last_power_state is None:
             return None
         return time.time() - self._last_power_state_update
+
+    @property
+    def pending_connect_age(self) -> float | None:
+        """Return seconds the current in-flight connect has been running, or None if there is none."""
+        task = self._pending_connect_task
+        if task is None or task.done():
+            return None
+        return time.monotonic() - self._pending_connect_started
+
+    @property
+    def lock_held_age(self) -> float | None:
+        """Return seconds the client lock has been held, or None if it is free."""
+        if not self._client_lock.locked() or not self._lock_acquired_at:
+            return None
+        return time.monotonic() - self._lock_acquired_at
+
+    @property
+    def lock_holder(self) -> str | None:
+        """Return a description of the operation currently holding the client lock, if any."""
+        return self._lock_holder if self._client_lock.locked() else None
+
+    @property
+    def last_successful_connection(self) -> float | None:
+        """Return the wall-clock time of the last successful connection, or None if never."""
+        return self._last_successful_connection or None
+
+    @property
+    def consecutive_failures(self) -> int:
+        """Return how many connection attempts have failed in a row."""
+        return self._consecutive_failures
 
     @property
     def cached_info(self) -> dict[BaseStationDeviceInfoKey, str]:
@@ -239,19 +290,63 @@ class BasestationDevice(ABC):
 
         self._available = False
 
+    def _set_available(self, reason: str, *, available: bool) -> None:
+        """
+        Update availability, logging and recording only actual transitions.
+
+        Availability flipping is the symptom a user actually notices, so it's the one thing here
+        that's worth surfacing above DEBUG - but only on a change, which makes it self-limiting
+        (a station that's been down for hours logs once, not once per poll). The reason string is
+        what makes the line useful afterwards: "unavailable" alone doesn't distinguish a station
+        that was unplugged from one whose proxy ran out of slots.
+        """
+        if available == self._available:
+            return
+
+        self._available = available
+
+        if available:
+            downtime = time.time() - self._last_failure_time if self._last_failure_time else None
+            self.connection_log.record(Phase.AVAILABILITY, Outcome.AVAILABLE, detail=reason, duration=downtime)
+            _LOGGER.info(
+                "Basestation %s is available again (%s)%s",
+                self.mac,
+                reason,
+                f", after {downtime:.0f}s unavailable" if downtime else "",
+            )
+            return
+
+        self.connection_log.stats.became_unavailable += 1
+        self.connection_log.record(Phase.AVAILABILITY, Outcome.UNAVAILABLE, detail=reason)
+
+        last_failure = self.connection_log.last_failure
+        _LOGGER.warning(
+            "Basestation %s is now unavailable (%s). Consecutive failures: %d. Last error: %s. "
+            "In-flight connect: %s. Suspected stranded proxy slots so far: %d. "
+            "Download this device's diagnostics from its device page for the full history",
+            self.mac,
+            reason,
+            self._consecutive_failures,
+            last_failure.detail if last_failure else "none recorded",
+            f"{self.pending_connect_age:.0f}s old" if self.pending_connect_age is not None else "none",
+            self.connection_log.stats.suspected_stranded_slots,
+        )
+
     def _record_connection_success(self) -> None:
         self._consecutive_failures = 0
         self._retry_count = 0
-        self._available = True
+        self._set_available("operation succeeded", available=True)
         self._last_successful_connection = time.time()
         self._last_error_out_of_slots = False
+        self.connection_log.stats.operation_succeeded += 1
 
     def _record_connection_failure(self) -> None:
         self._consecutive_failures += 1
         self._retry_count += 1
         self._last_failure_time = time.time()
+        self.connection_log.stats.operation_failed += 1
         if self._consecutive_failures >= UNAVAILABLE_AFTER_CONSECUTIVE_FAILURES:
-            self._available = False
+            self._set_available(f"{self._consecutive_failures} consecutive failures", available=False)
 
     def _update_power_state(self, state: int) -> None:
         self._last_power_state = state
@@ -296,7 +391,7 @@ class BasestationDevice(ABC):
                 result = await self._perform_ble_operation(client, op)
 
                 self._record_connection_success()
-                await client.disconnect()
+                await self._safe_disconnect(client, "completing operation")
 
             # Delay to allow BLE Proxy to internally clear the connection slot
             await asyncio.sleep(0.5)
@@ -307,11 +402,8 @@ class BasestationDevice(ABC):
             return result
         finally:
             if client and client.is_connected:
-                try:
-                    await client.disconnect()
-                    await asyncio.sleep(0.5)
-                except Exception as err:
-                    _LOGGER.debug("Ignored disconnect error: %s", err)
+                await self._safe_disconnect(client, "cleaning up after operation")
+                await asyncio.sleep(0.5)
             self._current_client = None
 
         return None
@@ -347,12 +439,59 @@ class BasestationDevice(ABC):
             )
             task.add_done_callback(self._on_connect_task_done)
             self._pending_connect_task = task
+            self._pending_connect_started = time.monotonic()
+            self._pending_connect_warned = False
+            self.connection_log.stats.connect_started += 1
+        else:
+            self.connection_log.stats.connect_reused += 1
+            self._warn_if_connect_is_stuck()
 
+        started = self._pending_connect_started
         self._pending_connect_waiters += 1
         try:
-            return await asyncio.shield(task)
+            client = await asyncio.shield(task)
+        except asyncio.CancelledError:
+            # Our wait was cancelled - almost always connection_timeout elapsing in the caller,
+            # not the connect itself being torn down. The attempt keeps running by design; record
+            # it so a pattern of them is visible later, since a rising abandon count is what
+            # precedes proxy slot exhaustion.
+            if not task.cancelled():
+                self.connection_log.stats.connect_abandoned += 1
+                self.connection_log.record(
+                    Phase.CONNECT,
+                    Outcome.ABANDONED,
+                    duration=time.monotonic() - started,
+                    detail=f"{self._pending_connect_waiters - 1} other waiter(s) remaining",
+                )
+            raise
+        except Exception as err:
+            self.connection_log.stats.connect_failed += 1
+            self.connection_log.record_exception(Phase.CONNECT, Outcome.ERROR, err, duration=time.monotonic() - started)
+            raise
+        else:
+            self.connection_log.stats.connect_succeeded += 1
+            self.connection_log.record(Phase.CONNECT, Outcome.OK, duration=time.monotonic() - started, store=False)
+            return client
         finally:
             self._pending_connect_waiters -= 1
+
+    def _warn_if_connect_is_stuck(self) -> None:
+        """Warn once when an in-flight connect has been running implausibly long."""
+        age = self.pending_connect_age
+        if age is None or age < PENDING_CONNECT_WARN_AGE or self._pending_connect_warned:
+            return
+
+        self._pending_connect_warned = True
+        self.connection_log.record(Phase.CONNECT, Outcome.TIMEOUT, detail="still in flight", duration=age)
+        _LOGGER.warning(
+            "Connect attempt for basestation %s has been in flight for %.0fs and is still running. "
+            "This normally means the Bluetooth proxy covering it is congested or out of connection "
+            "slots; it is being left to finish deliberately rather than cancelled, since cancelling "
+            "it is what strands a slot. Out-of-slots errors so far: %d",
+            self.mac,
+            age,
+            self.connection_log.stats.out_of_slots,
+        )
 
     def _on_connect_task_done(self, task: asyncio.Task[BleakClientWithServiceCache]) -> None:
         """
@@ -362,6 +501,11 @@ class BasestationDevice(ABC):
         away so it can't sit there occupying a proxy slot. If it failed, establish_connection()
         already ran its own cleanup before raising, so there's nothing left to do.
         """
+        # A replacement attempt may already have started by the time this callback runs (done
+        # callbacks are scheduled, not immediate), in which case _pending_connect_started belongs
+        # to that one and says nothing about this task's age.
+        age = time.monotonic() - self._pending_connect_started if self._pending_connect_task is task else None
+
         if self._pending_connect_task is task:
             self._pending_connect_task = None
 
@@ -370,9 +514,24 @@ class BasestationDevice(ABC):
 
         try:
             client = task.result()
-        except (Exception, asyncio.CancelledError):
+        except asyncio.CancelledError:
+            self.connection_log.record(Phase.CONNECT, Outcome.CANCELLED, duration=age, detail="nobody waiting")
+            return
+        except Exception as err:
+            # establish_connection() ran its own cleanup before raising, so the slot is not at
+            # risk here - but the error is still worth keeping, because this is the one connect
+            # outcome nobody is awaiting and it would otherwise vanish entirely.
+            self.connection_log.record_exception(
+                Phase.CONNECT, Outcome.ERROR, err, duration=age, context="nobody waiting"
+            )
             return
 
+        _LOGGER.info(
+            "Connect for basestation %s succeeded%s, once nothing was waiting for it any more; "
+            "disconnecting it so it cannot hold a proxy connection slot",
+            self.mac,
+            f" after {age:.0f}s" if age is not None else "",
+        )
         self.hass.async_create_background_task(
             self._close_abandoned_client(client), name=f"basestation_close_abandoned_{self.mac}"
         )
@@ -383,7 +542,61 @@ class BasestationDevice(ABC):
             if client.is_connected:
                 await client.disconnect()
         except Exception as err:
-            _LOGGER.debug("Error disconnecting abandoned client for %s: %s", self.mac, err)
+            # The connection is up and we cannot close it: this is the failure that actually
+            # leaks an ESPHome proxy slot, so it warrants a warning rather than the silence it
+            # used to get.
+            self.connection_log.stats.abandoned_close_failed += 1
+            self.connection_log.record_exception(Phase.DISCONNECT, Outcome.STRANDED, err)
+            _LOGGER.warning(
+                "Failed to disconnect an abandoned connection to basestation %s: %s. A Bluetooth proxy "
+                "connection slot may now be stuck until the proxy is restarted",
+                self.mac,
+                err,
+            )
+        else:
+            self.connection_log.stats.abandoned_reclaimed += 1
+            self.connection_log.record(Phase.DISCONNECT, Outcome.RECLAIMED)
+
+    async def _safe_disconnect(self, client: BleakClientWithServiceCache, context: str) -> None:
+        """
+        Disconnect a client, recording anything that stops it from completing.
+
+        Nothing here changes the outcome - it's purely so that a disconnect which fails, or which
+        gets torn down part-way through, leaves a trace. That matters because these calls are the
+        one connection path still reachable by an enclosing timeout: unlike the initial connect
+        (which _await_connection shields), a disconnect running when the coordinator's overall
+        update timeout expires is cancelled where it stands, which is a plausible way to leave an
+        ESPHome proxy holding a slot. If that is what's happening, `disconnect_cancelled` in the
+        diagnostics will be non-zero and will have climbed at the moment the device went
+        unavailable.
+        """
+        started = time.monotonic()
+        try:
+            await client.disconnect()
+        except asyncio.CancelledError:
+            self.connection_log.stats.disconnect_cancelled += 1
+            self.connection_log.record(
+                Phase.DISCONNECT,
+                Outcome.CANCELLED,
+                duration=time.monotonic() - started,
+                detail=context,
+            )
+            _LOGGER.warning(
+                "Disconnect from basestation %s was cancelled after %.1fs while %s. The connection was "
+                "torn down mid-teardown, which can leave a Bluetooth proxy connection slot occupied",
+                self.mac,
+                time.monotonic() - started,
+                context,
+            )
+            raise
+        except Exception as err:
+            self.connection_log.stats.disconnect_failed += 1
+            self.connection_log.record_exception(
+                Phase.DISCONNECT, Outcome.ERROR, err, duration=time.monotonic() - started, context=context
+            )
+            _LOGGER.debug("Ignored disconnect error for %s while %s: %s", self.mac, context, err)
+        else:
+            self.connection_log.record(Phase.DISCONNECT, Outcome.OK, duration=time.monotonic() - started, store=False)
 
     @overload
     async def async_ble_operation(self, op: BLEOperationRead) -> bytearray | Literal[False]: ...
@@ -394,17 +607,9 @@ class BasestationDevice(ABC):
     async def async_ble_operation(self, op: BLEOperationRead | BLEOperationWrite) -> bool | bytearray:
         """Execute a BLE operation with proper connection management."""
         lock_timeout = 20.0 if isinstance(op, BLEOperationWrite) else 10.0
+        holder = f"{'write' if isinstance(op, BLEOperationWrite) else 'read'} {op.characteristic_uuid}"
 
-        try:
-            async with asyncio.timeout(lock_timeout):
-                await self._client_lock.acquire()
-        except TimeoutError:
-            _LOGGER.debug(
-                "Timeout (%ss) acquiring lock for BLE operation %s on %s",
-                lock_timeout,
-                "write" if isinstance(op, BLEOperationWrite) else "read",
-                self.mac,
-            )
+        if not await self._acquire_lock(lock_timeout, holder):
             return False
 
         try:
@@ -426,7 +631,67 @@ class BasestationDevice(ABC):
             return False
 
         finally:
-            self._client_lock.release()
+            self._release_lock()
+
+    async def _acquire_lock(self, timeout: float, holder: str) -> bool:  # noqa: ASYNC109
+        """
+        Take the per-device client lock, recording who holds it and reporting failure to get it.
+
+        Knowing *what* was holding the lock is the difference between a usable and a useless
+        report when one station wedges while the rest keep working: the timeout alone says only
+        that something was stuck, whereas the holder plus how long it had been held points
+        straight at the operation that never returned.
+
+        The timeout is a parameter rather than an `asyncio.timeout` at the call site (ASYNC109)
+        because expiring it is not an error to propagate: it is recorded and logged here, and the
+        caller just gets False.
+        """
+        try:
+            async with asyncio.timeout(timeout):
+                await self._client_lock.acquire()
+        except TimeoutError:
+            self.connection_log.stats.lock_timeout += 1
+            held_by, held_for = self._lock_holder, self.lock_held_age
+            self.connection_log.record(
+                Phase.LOCK,
+                Outcome.TIMEOUT,
+                duration=timeout,
+                detail=f"{holder} blocked by {held_by or 'unknown'}",
+            )
+            _LOGGER.warning(
+                "Timed out after %.0fs waiting for the Bluetooth lock on basestation %s to run '%s'. "
+                "It is held by '%s'%s, which has not finished. Repeated occurrences mean an operation "
+                "is wedged and the device will go unavailable",
+                timeout,
+                self.mac,
+                holder,
+                held_by or "unknown",
+                f" for {held_for:.0f}s" if held_for is not None else "",
+            )
+            return False
+        else:
+            self._lock_acquired_at = time.monotonic()
+            self._lock_holder = holder
+            return True
+
+    def _release_lock(self) -> None:
+        """Release the client lock, warning if the operation that held it took implausibly long."""
+        held_for = self.lock_held_age
+        holder = self._lock_holder
+
+        self._lock_acquired_at = 0.0
+        self._lock_holder = None
+        self._client_lock.release()
+
+        if held_for is not None and held_for > LOCK_HELD_WARN_AGE:
+            self.connection_log.record(Phase.LOCK, Outcome.TIMEOUT, duration=held_for, detail=f"slow: {holder}")
+            _LOGGER.warning(
+                "Bluetooth operation '%s' on basestation %s held the connection lock for %.0fs. "
+                "Everything else queued behind it for that entire time",
+                holder,
+                self.mac,
+                held_for,
+            )
 
     def _handle_disconnect(self, _client: BleakClientWithServiceCache) -> None:
         _LOGGER.debug("Device %s disconnected", self.mac)
@@ -435,21 +700,27 @@ class BasestationDevice(ABC):
         """Classify a connect/operate exception, log it, and flag out-of-slots for backoff."""
         if isinstance(err, BleakOutOfConnectionSlotsError):
             self._last_error_out_of_slots = True
+            self.connection_log.stats.out_of_slots += 1
+            self.connection_log.record_exception(Phase.OPERATION, Outcome.OUT_OF_SLOTS, err, context=context)
             _LOGGER.warning(
-                "BLE proxy/adapter out of connection slots while %s %s. Consider adding another "
-                "ESPHome Bluetooth proxy near this device: %s",
+                "BLE proxy/adapter out of connection slots while %s %s (%d time(s) so far). Consider adding "
+                "another ESPHome Bluetooth proxy near this device: %s",
                 context,
                 self.mac,
+                self.connection_log.stats.out_of_slots,
                 err,
             )
             return
 
         self._last_error_out_of_slots = False
         if isinstance(err, BleakError):
+            self.connection_log.record_exception(Phase.OPERATION, Outcome.ERROR, err, context=context)
             _LOGGER.debug("BLE error %s %s: %s", context, self.mac, err)
         elif isinstance(err, TimeoutError):
+            self.connection_log.record_exception(Phase.OPERATION, Outcome.TIMEOUT, err, context=context)
             _LOGGER.debug("Timeout %s %s: %s", context, self.mac, err)
         else:
+            self.connection_log.record_exception(Phase.OPERATION, Outcome.ERROR, err, context=context)
             _LOGGER.exception("Unexpected error %s %s", context, self.mac)
 
     async def _read_standard_characteristics(
@@ -499,7 +770,7 @@ class BasestationDevice(ABC):
                 spec_success = await self._read_specific_info(client, info)
 
                 if std_success or spec_success:
-                    await client.disconnect()
+                    await self._safe_disconnect(client, "completing device info read")
                     await asyncio.sleep(0.5)
 
         except Exception as err:
@@ -509,11 +780,8 @@ class BasestationDevice(ABC):
                 return info
         finally:
             if client and client.is_connected:
-                try:
-                    await client.disconnect()
-                    await asyncio.sleep(0.5)
-                except Exception as err:
-                    _LOGGER.debug("Ignored disconnect error: %s", err)
+                await self._safe_disconnect(client, "cleaning up after device info read")
+                await asyncio.sleep(0.5)
 
             self._current_client = None
 
@@ -532,11 +800,7 @@ class BasestationDevice(ABC):
 
         lock_timeout = 15.0 if not self._device_info_read_success else 5.0
 
-        try:
-            async with asyncio.timeout(lock_timeout):
-                await self._client_lock.acquire()
-        except TimeoutError:
-            _LOGGER.debug("Timeout (%ss) acquiring lock for reading device info on %s", lock_timeout, self.mac)
+        if not await self._acquire_lock(lock_timeout, "device info read"):
             return self._info
 
         try:
@@ -562,7 +826,7 @@ class BasestationDevice(ABC):
                 self._record_connection_failure()
 
         finally:
-            self._client_lock.release()
+            self._release_lock()
 
         return self._info
 
@@ -644,7 +908,7 @@ class ValveBasestationDevice(BasestationDevice):
             # Not visible at all: definitely unavailable. Otherwise, leave availability to
             # _record_connection_success/_record_connection_failure below, so a device that is
             # advertising but repeatedly failing to connect still ends up marked unavailable.
-            self._available = False
+            self._set_available("no longer advertising to any Bluetooth adapter or proxy", available=False)
             return
 
         value = await self.async_ble_operation(BLEOperationRead(V2_PWR_CHARACTERISTIC))
@@ -813,7 +1077,7 @@ class ViveBasestationDevice(BasestationDevice):
         try:
             ble_device = self.get_ble_device()
             if ble_device is None:
-                self._available = False
+                self._set_available("no longer advertising to any Bluetooth adapter or proxy", available=False)
                 return
 
             if self._consecutive_failures >= UNAVAILABLE_AFTER_CONSECUTIVE_FAILURES:
@@ -821,10 +1085,10 @@ class ViveBasestationDevice(BasestationDevice):
                     return
                 self._consecutive_failures = 0
 
-            self._available = True
+            self._set_available("advertising", available=True)
         except Exception:
             _LOGGER.exception("Error updating V1 basestation availability")
-            self._available = False
+            self._set_available("error while checking advertisement visibility", available=False)
 
     async def _read_specific_info(
         self, _client: BleakClientWithServiceCache, info: dict[BaseStationDeviceInfoKey, Any]

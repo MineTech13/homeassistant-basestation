@@ -131,6 +131,45 @@ Each base station creates multiple entities for comprehensive control:
 ### 🔵 **Buttons**
 - **Identify Button** *(V2 only)* - Blink LED for device identification
 
+### 🩺 **Connection Health Sensors** *(disabled by default)*
+
+Disabled out of the box, since they exist for tracking down Bluetooth problems rather than for
+everyday use. Enable them via **Settings** → **Devices & Services** → **VR Basestation** → the
+device → the entity → **Enable**, and Home Assistant will keep their history — so if a base station
+starts misbehaving later, you can see exactly when it began instead of relying on logs that have
+already rotated away.
+
+- **Connection failures** - Total failed connections and operations
+- **Abandoned connection attempts** - Connects that took too long to wait for (a rising count is an
+  early warning that the covering Bluetooth proxy is struggling)
+- **Suspected stranded proxy slots** - Connections that could not be confirmed as closed; the
+  number to watch if base stations become unavailable over time
+- **Out of connection slots errors** - Times the Bluetooth proxy reported it had no slots left
+- **Last connection error** - Most recent error, with its type
+- **Last successful connection** - When the base station was last reached
+
+---
+
+## 🩺 Troubleshooting
+
+If a base station goes unavailable and stays that way, open its device page and use the
+three-dot menu → **Download diagnostics**. The file contains the recent connection history,
+lifetime counters, whether a connection attempt is still in flight, and which Bluetooth proxy the
+station is reachable through — enough to diagnose the problem without having had debug logging
+enabled beforehand. Grab it *before* reloading the integration, which resets the counters.
+
+For a live view, enable debug logging:
+
+```yaml
+logger:
+  logs:
+    custom_components.basestation: debug
+```
+
+Availability changes, lock contention, and anything that risks leaving a Bluetooth proxy
+connection slot occupied are logged at warning level regardless, so they show up without debug
+logging enabled.
+
 ---
 
 ## 🔧 Advanced Configuration
