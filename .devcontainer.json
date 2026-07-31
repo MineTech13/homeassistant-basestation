@@ -62,6 +62,7 @@
   "remoteUser": "vscode",
   "features": {
     "ghcr.io/devcontainers-extra/features/claude-code:2": {},
-    "ghcr.io/devcontainers-extra/features/node-asdf:0": {}
+    "ghcr.io/devcontainers-extra/features/node-asdf:0": {},
+    "ghcr.io/esimkowitz/devcontainer-features/claude-code-persistence:1": {}
   }
 }
