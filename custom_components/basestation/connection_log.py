@@ -52,6 +52,9 @@ class Outcome(StrEnum):
     TIMEOUT = "timeout"
     CANCELLED = "cancelled"
     OUT_OF_SLOTS = "out_of_slots"
+    # The ESPHome proxy itself was still (re)establishing its own API connection to Home Assistant
+    # when we tried to use it - a proxy-side reboot/reconnect, not congestion on a healthy proxy.
+    PROXY_RESTARTING = "proxy_restarting"
     # Our wait for a connect elapsed; the attempt itself was left running (see
     # BasestationDevice._await_connection).
     ABANDONED = "abandoned"
@@ -70,6 +73,7 @@ FAILURE_OUTCOMES = frozenset(
         Outcome.TIMEOUT,
         Outcome.CANCELLED,
         Outcome.OUT_OF_SLOTS,
+        Outcome.PROXY_RESTARTING,
         Outcome.STRANDED,
     }
 )
@@ -130,6 +134,7 @@ class ConnectionStats:
     disconnect_failed: int = 0
     disconnect_cancelled: int = 0
     out_of_slots: int = 0
+    proxy_restarting: int = 0
     lock_timeout: int = 0
     operation_succeeded: int = 0
     operation_failed: int = 0

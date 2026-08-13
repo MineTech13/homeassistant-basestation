@@ -148,6 +148,72 @@ under an hour and the events that explain a failure are the ones evicted.
   keeps their history for days — far longer than the logs — which is how a slow degradation gets spotted
   after the fact.
 
+### Second, distinct root cause found (2026-08-13): ESP32 proxy firmware crash, not slot exhaustion
+
+A user (4× V2 base stations, `couch_ecke`/`pc_ecke`/`bett_ecke`/`tur_ecke`, 2 ESPHome proxies including one
+named `ble-tracker`) supplied a full day of connection-health sensor history, a unified logbook export, the
+HA error log, and the `ble-tracker` proxy's own ESPHome boot log for 2026-08-11/12. Findings, in order of
+how the investigation went:
+
+- **`suspected_stranded_slots` stayed 0 all day, on all 4 devices.** Per the diagnosis note above, this
+  rules out the unshielded-disconnect theory as the explanation for *this* incident — the shield-based fix
+  is doing its job. The instability had a different cause.
+- **One station (`bett_ecke`) accounted for ~10x the errors/abandoned attempts of the other three**, flapping
+  `on`/`off`/`unavailable` ~25 times in one day in tight ~90–140s retry bursts, with by far the most
+  `BleakOutOfConnectionSlotsError` occurrences. Classic proxy congestion signature.
+- **A second station (`couch_ecke`) instead had one clean ~11-hour continuous outage**, and — separately —
+  its `power_state` sensor never once changed value the entire day (`Starting Up` from first row to last),
+  even though `letzte_erfolgreiche_verbindung` kept advancing ~6,776 times that day, meaning connects were
+  frequently succeeding, just always reading back `Starting Up`. This matches the fast-poll-while-booting
+  behavior in `coordinator.py` working exactly as designed (the state kept being *freshly reconfirmed*, so
+  the staleness fallback never triggered) — but leaves open why the device's own read never left `Starting
+  Up` for 11+ hours. Not yet explained; worth another look if it recurs on a station whose proxy is otherwise
+  healthy.
+- **Cross-device correlation was the key clue.** A unified chronological export of all 4 devices' last-error
+  sensor showed 25 clusters where ≥2 devices failed within 15 seconds of each other, including one moment
+  where all 4 failed within a 10-second window. Independent per-device polling landing on the same few
+  seconds repeatedly is very unlikely by chance — pointed at a cause shared across devices, i.e. proxy-level,
+  not per-station.
+- **Confirmed: the `ble-tracker` ESP32 proxy hard-crashed.** Its own ESPHome boot log showed `*** CRASH
+  DETECTED ON PREVIOUS BOOT ***`, `Reason: Fault - LoadStoreError`, with a backtrace through
+  `gatt_get_tcb_by_idx` (Bluedroid GATT stack) ← `esp_ble_gattc_read_char` ←
+  `BluetoothProxy::bluetooth_gatt_read` ← `on_bluetooth_gatt_read_request` — i.e. it crashed while servicing
+  a GATT characteristic **read**, exactly the operation this integration issues on every poll. This is a
+  firmware-level ESP-IDF/Bluedroid bug on the proxy, not something reachable from `device.py`. The crash
+  timestamp (proxy log, ~15:11:52–53) lines up closely with `couch_ecke`'s switch flipping back to `on` at
+  15:15:01 — consistent with the proxy's reboot-and-reconnect cycle being what ended that station's outage.
+  Also visible in the HA error log during this period: `BleakError: Authenticated connection not ready yet
+  for ble-tracker @ <ip>; current state is ConnectionState.HOST_RESOLVED!` (the proxy mid-reconnect to HA's
+  own API) and, in the out-of-slots messages, moments of `2 scanner(s) registered, 0 scanning` — i.e. total,
+  if brief, loss of BLE scanning across both proxies, not just one being congested.
+- **Config check before reflashing `ble-tracker`:** its yaml had `esp32_ble_tracker.scan_parameters.active:
+  true` but the crashed firmware's own boot dump reported `Scan Type: PASSIVE` — the running firmware
+  predates that yaml edit (config-cache log line pointed at a validated-but-stale build). Also flagged:
+  `logger: level: DEBUG` piles UART/formatting overhead onto a chip that logged `api took a long time for an
+  operation (57 ms), max is 50 ms` right after boot — i.e. it's already missing its own timing budget: worth
+  turning down to INFO for normal operation. NimBLE is not an available alternative to Bluedroid here — this
+  board (`esp32dev`) has classic-BT hardware, and ESPHome's NimBLE option is for the BLE-only chips (C3/S3/
+  C6/H2) that lack it.
+
+**What changed here in response:** two observability additions in `device.py`/`connection_log.py`, both
+purely diagnostic (no behavior/retry-logic change, since the crash itself is outside this integration's
+reach):
+- A new `Outcome.PROXY_RESTARTING` / `ConnectionStats.proxy_restarting` counter, detected in
+  `_record_connect_exception()` by matching the `ConnectionState.` / `not ready yet` substrings in the error
+  message (`PROXY_RESTARTING_MARKERS`, `_is_proxy_restarting_error()`). This exists purely as a message-text
+  match because `bleak_esphome` collapses aioesphomeapi's structured `APIConnectionError` down to a bare
+  `bleak.exc.BleakError` (`raise BleakError(str(err)) from err`) before it reaches us, so there's no
+  exception type left to check — same fragility caveat as the `bleak_retry_connector` internals mentioned in
+  Conventions below, and worth re-checking if an aioesphomeapi update changes that wording.
+- `_set_available()`'s "now unavailable" WARNING now includes `_seen_by_proxies()` — the scanner/proxy
+  name(s) currently seeing the device's advertisements. The point is to make a shared-proxy incident
+  self-evident from the HA log alone next time (matching WARNING lines across stations, same proxy name),
+  rather than requiring the CSV-export-plus-diagnostics-plus-manual-correlation process this investigation
+  actually needed.
+
+Firmware update / upstream report for the ESP-IDF crash itself is still pending as of this writing — status
+unverified.
+
 ## Conventions
 
 - User-facing strings live in `translations/{en,de,es,fr,it,nl}.json` and must be kept in sync across all

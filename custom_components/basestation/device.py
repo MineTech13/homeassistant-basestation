@@ -71,7 +71,23 @@ PENDING_CONNECT_WARN_AGE = 90.0
 # (MAX_RETRIES attempts, each up to connection_timeout plus backoff) at default settings.
 LOCK_HELD_WARN_AGE = 120.0
 
+# Substrings of the message bleak_esphome raises while its ESPHome proxy is still (re)establishing
+# its own API connection to Home Assistant (e.g. after a Wi-Fi drop or a firmware crash/reboot on
+# the proxy itself). bleak_esphome collapses aioesphomeapi's structured APIConnectionError into a
+# bare bleak.exc.BleakError (`raise BleakError(str(err)) from err`), so there's no exception type
+# left to check by the time it reaches us - only the message, which as of this aioesphomeapi
+# version reads "Authenticated connection not ready yet for <name> @ <ip>; current state is
+# ConnectionState.<state>!". Matching on wording is inherently fragile and could break on an
+# aioesphomeapi update, same caveat as the bleak_retry_connector internals imported above.
+PROXY_RESTARTING_MARKERS = ("ConnectionState.", "not ready yet")
+
 type BaseStationDeviceInfoKey = Literal["firmware", "model", "hardware", "manufacturer", "channel", "pair_id"]
+
+
+def _is_proxy_restarting_error(err: Exception) -> bool:
+    """Return True if err looks like PROXY_RESTARTING_MARKERS - see that constant for why."""
+    message = str(err)
+    return all(marker in message for marker in PROXY_RESTARTING_MARKERS)
 
 
 @dataclass(repr=False)
@@ -248,6 +264,20 @@ class BasestationDevice(ABC):
         """Get the BLE device from the address."""
         return bluetooth.async_ble_device_from_address(self.hass, self.mac)
 
+    def _seen_by_proxies(self) -> list[str]:
+        """
+        Return the names of scanners/proxies currently seeing this device's advertisements.
+
+        Pulled into the "now unavailable" warning so a proxy-wide problem (one proxy crashing or
+        losing Wi-Fi and taking every station behind it down at once) is visible directly in the
+        log, rather than only discoverable afterwards by downloading diagnostics from every
+        affected device and cross-referencing them by hand.
+        """
+        return [
+            scanner_device.scanner.name
+            for scanner_device in bluetooth.async_scanner_devices_by_address(self.hass, self.mac, connectable=True)
+        ]
+
     async def cleanup(self) -> None:
         """Clean up resources when device is being removed."""
         # Attempt to acquire lock with timeout
@@ -320,9 +350,10 @@ class BasestationDevice(ABC):
         self.connection_log.record(Phase.AVAILABILITY, Outcome.UNAVAILABLE, detail=reason)
 
         last_failure = self.connection_log.last_failure
+        seen_by = self._seen_by_proxies()
         _LOGGER.warning(
             "Basestation %s is now unavailable (%s). Consecutive failures: %d. Last error: %s. "
-            "In-flight connect: %s. Suspected stranded proxy slots so far: %d. "
+            "In-flight connect: %s. Suspected stranded proxy slots so far: %d. Currently seen by: %s. "
             "Download this device's diagnostics from its device page for the full history",
             self.mac,
             reason,
@@ -330,6 +361,7 @@ class BasestationDevice(ABC):
             last_failure.detail if last_failure else "none recorded",
             f"{self.pending_connect_age:.0f}s old" if self.pending_connect_age is not None else "none",
             self.connection_log.stats.suspected_stranded_slots,
+            ", ".join(seen_by) if seen_by else "no scanner/proxy currently",
         )
 
     def _record_connection_success(self) -> None:
@@ -713,6 +745,22 @@ class BasestationDevice(ABC):
             return
 
         self._last_error_out_of_slots = False
+
+        if isinstance(err, BleakError) and _is_proxy_restarting_error(err):
+            self.connection_log.stats.proxy_restarting += 1
+            self.connection_log.record_exception(Phase.OPERATION, Outcome.PROXY_RESTARTING, err, context=context)
+            _LOGGER.warning(
+                "The Bluetooth proxy covering basestation %s appears to still be (re)connecting to "
+                "Home Assistant itself (%d time(s) so far) while %s: %s. This is a proxy-side hiccup "
+                "(Wi-Fi drop, or the proxy device rebooting/crashing) rather than proxy congestion - "
+                "check that proxy's own logs if this keeps happening",
+                self.mac,
+                self.connection_log.stats.proxy_restarting,
+                context,
+                err,
+            )
+            return
+
         if isinstance(err, BleakError):
             self.connection_log.record_exception(Phase.OPERATION, Outcome.ERROR, err, context=context)
             _LOGGER.debug("BLE error %s %s: %s", context, self.mac, err)
