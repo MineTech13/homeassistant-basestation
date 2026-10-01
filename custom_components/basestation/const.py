@@ -79,6 +79,11 @@ V2_STATE_DESCRIPTIONS: dict[int, str] = {
 DEFAULT_INFO_SCAN_INTERVAL = 1800  # 30 minutes - for static info sensors
 DEFAULT_POWER_STATE_SCAN_INTERVAL = 60  # 60 seconds - for power state sensor (controls ALL state freshness)
 DEFAULT_FAST_POLLING_INTERVAL = 5  # 5 seconds - for fast polling during boot
+# Hard cap on how long one boot episode may poll at the fast interval. A real boot reaches ON within
+# seconds, but a V2 station woken from standby can keep reporting STARTING_UP for hours - observed
+# 2026-10-01 on all four stations at once (~40 connects/min through one ESPHome proxy for 4.5h).
+# Freshness alone can't catch that: each fast poll re-confirms the boot state.
+MAX_FAST_POLLING_DURATION = 120
 
 # device.py never cancels an in-flight establish_connection() call itself (see
 # BasestationDevice._await_connection) - connection_timeout only controls how long we wait for one
