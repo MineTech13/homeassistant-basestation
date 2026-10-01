@@ -292,3 +292,17 @@ proxy — nothing in `device.py` can fix it.
   `BleakOutOfConnectionSlotsError`) even though they're not in that library's `__all__` — there's precedent
   for this in the codebase, just be aware such imports aren't guaranteed stable across `bleak-retry-connector`
   version bumps.
+
+## Releasing
+
+- Set the exact version in **both** `custom_components/basestation/manifest.json` and `pyproject.toml` before
+  tagging — for pre-releases too, so HA/HACS show which alpha is actually installed.
+- Pre-release versions use `X.Y.Z-alpha.N` **without leading zeros** (e.g. `2.1.0-alpha.5`). The tag spelling
+  `alpha.005` is not valid SemVer (leading zero), AwesomeVersion classifies it as UNKNOWN and hassfest rejects
+  it. `X.Y.Z-alpha.N` sorts above the previous stable and below the final `X.Y.Z`. Git tags keep the existing
+  `vX.Y.Z-alpha.00N` spelling.
+- Order: lint gate (`ruff format --check . && ruff check . && mypy custom_components/basestation`) → bump
+  commit → push `dev` → tag → `gh release create <tag> --prerelease --target dev`.
+- Pre-releases are cut from `dev`. Exception: `v2.1.0-alpha.004` was tagged on the since-deleted `alt-test`
+  branch (keep-alive connection reuse + verified-command loop, never merged) — it is not an ancestor of
+  `alpha.005` or later, so compare links should go from `alpha.003`.
