@@ -45,7 +45,9 @@ coordinator data as entities via `CoordinatorEntity`. `connection_log.py` (in-me
   `fast_polling_interval` (default 5s) automatically while the device is mid-boot
   (`STARTING_UP`/`BOOTING_1`/`BOOTING_2`), and falls back to the normal interval if that boot state goes
   stale without being reconfirmed by an actual read (`last_power_state_age`) — otherwise a device that
-  stopped responding mid-boot would poll at the fast interval forever.
+  stopped responding mid-boot would poll at the fast interval forever. Each boot episode is additionally
+  capped at `MAX_FAST_POLLING_DURATION` (120s), because a station can keep *answering* `STARTING_UP` for hours
+  (see the 2026-10-01 evening incident below).
 - `BasestationInfoCoordinator` — polls static info (firmware/model/hardware/manufacturer/channel/pair_id) at
   `info_scan_interval` (default 1800s). Falls back to cached info on timeout/error rather than failing the
   update, so slow/flaky reads don't flap the info sensors.
@@ -279,6 +281,43 @@ Blackymas package): at boot it logs `script took 216 ms (max 50)` / `api took 96
 If logs show the proxy kept running and logging normally while stations were unreachable, the wedge is inside
 the Bluedroid GATT stack, and the realistic options are ESPHome/ESP-IDF updates or moving traffic off that
 proxy — nothing in `device.py` can fix it.
+
+### Fourth incident (2026-10-01 evening): integration's own fast polling flooded the NSPanel
+
+Same setup. `pc_ecke` went unavailable at 18:53 local. Evidence was collected per the runbook above before
+restarting; restart brought it back ~20s later.
+
+- **Proxy side (logbook):** `nspanel` logged `[E] OPEN_EVT in unexpected state` + `[W] Connection open failed,
+  status=133` four times 18:49–18:52, then `[E] Timeout waiting for teardown, forcing IDLE` every ~70s
+  continuously from 18:49:55 until restarted. The last connect to `pc_ecke` (18:52:22) failed with that same
+  error; afterwards no proxy saw its adverts at all (`seen_by: []`), so the integration correctly stopped
+  attempting. Not a crash: `ble-tracker` reset reason `software via esp_restart`, heap ~94 KB free.
+  `suspected_stranded_slots` 0 everywhere — the unshielded-disconnect theory is still not implicated.
+- **The finding — this was integration-caused load:** after the stations were switched out of standby at
+  16:22, **all four reported `STARTING_UP` (0x01) for 4.5 hours** and never reached `ON`. Because each 5s fast
+  poll freshly re-read `STARTING_UP`, the staleness fallback in `coordinator.py` never fired, so every station
+  polled at `fast_polling_interval` the whole time: `tur_ecke`'s last-successful-connection sensor shows 140
+  connects in 15 min (one per ~6.5s), i.e. ~40 connect/disconnect cycles/min through the NSPanel for ~2.5h
+  before it wedged. This also explains the 2026-08-13 `couch_ecke` "stuck in Starting Up for 11h, ~6,776
+  connects/day" observation — same mechanism, it was never a separate mystery. (Note: a cold boot from
+  `SLEEP` does reach `ON` within seconds — 13:00 the same day; the long `STARTING_UP` was after leaving
+  `STANDBY`.)
+- **Fix:** `BasestationCoordinator` now caps each boot episode at `MAX_FAST_POLLING_DURATION` (120s, `const.py`)
+  of fast polling, tracked from when the boot state was first seen and reset once the state leaves the boot
+  set; it logs one WARNING when it falls back. Unverified whether this alone stops the proxy wedges — the
+  flood is the strongest suspect but causation isn't proven. If wedges continue at ~1 connect/min/station,
+  the proxy-side hypotheses in the third incident are back in play.
+- **Open:** whether `STARTING_UP` after standby is really "on" for these stations (i.e. whether the
+  switch/power-state sensor should treat it as on rather than booting). Not changed.
+- **Test plan agreed with the user (one variable at a time):**
+  1. Run `2.1.0-alpha.6` (the fast-poll cap) with the NSPanel still as the main proxy for a few days. Check
+     that connects stay at ~1/min/station even while stations sit in `STARTING_UP` (one WARNING per episode
+     in the HA log), and whether the NSPanel still wedges.
+  2. Only if it still wedges: add a dedicated ESP32 proxy (Ethernet preferred, else `power_save_mode: none`;
+     bare proxy + MQTT log + `debug:` sensors) in the room and **remove `bluetooth_proxy` from the NSPanel
+     entirely**, so HA can't keep routing through it. Confirm via diagnostics `seen_by` that all four
+     stations moved. Wedges stopping after step 2 but not step 1 → NSPanel overload was the cause.
+  When reading later incidents, first establish which of these stages was live at the time.
 
 ## Conventions
 
