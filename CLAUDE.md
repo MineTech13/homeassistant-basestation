@@ -214,6 +214,72 @@ reach):
 Firmware update / upstream report for the ESP-IDF crash itself is still pending as of this writing — status
 unverified.
 
+### Third incident (2026-10-01): stations unavailable until the proxies are restarted — persistent logging set up
+
+Same user/setup as above (4× V2, proxies `ble-tracker` and `nspanel`, HA OS, integration 2.1.0). Two stations
+(`bett_ecke`, `pc_ecke`) were unavailable; the other two fine. **Restarting both proxies (the user's
+`script.restart_ble_proxys`, which just presses the two ESPHome restart buttons) brought all four back within
+about a minute.** The user says this is recurring and that *which* station drops is random — i.e. a proxy-side
+stuck state, not a per-station or integration problem.
+
+What the integration's own diagnostics showed while it was broken (grabbed before the restart, via
+`ha_get_integration(..., include_diagnostics=True)`):
+- `suspected_stranded_slots` 0 and `out_of_slots` 0 on all four → not the unshielded-disconnect theory and not
+  slot exhaustion as the integration sees it. Any slot held on the ESP side is invisible to us.
+- `pc_ecke`: `seen_by: []`, no last advertisement, `connect_started: 0` → HA's Bluetooth stack received no
+  adverts from it at all, so the integration never even tried to connect. (Whether the integration should
+  behave differently when a device isn't advertising was not looked at in code — unverified.)
+- `bett_ecke`: 160 abandoned connects, connect timeouts at 20s, `disconnect timed out...` in the bleak error,
+  some `ESP_GATT_ERROR ... Interference/range`, and lock timeouts (state read vs. device-info read blocking
+  each other). RSSI was -103 dBm via `ble-tracker` but -80 dBm via `nspanel`. Weak signal alone does not explain
+  "a proxy restart fixes all stations at once".
+- After the restart everything recovered, including `pc_ecke` which no proxy had been seeing — so the proxy's
+  scanner/BLE stack was wedged, not the station.
+
+Observed afterwards: **every station connection goes through `nspanel`** (`[0]` slot, one at a time, ~once a
+minute per station); `ble-tracker` made none. So the NSPanel is the proxy that matters day to day, even though
+`ble-tracker` is the one with the known hard crash. The NSPanel is also heavily loaded (Nextion UI, the
+Blackymas package): at boot it logs `script took 216 ms (max 50)` / `api took 96 ms (max 50)`.
+
+**Unconfirmed hypotheses** (none proven — the point of the logging below is to settle it):
+- Wi-Fi power saving: neither proxy set `power_save_mode`, ESPHome recommends `none` for BLE proxies. Now set
+  to `none` on both.
+- NSPanel CPU/heap starvation of the Bluetooth stack.
+- Bluedroid / ESP-IDF GATT stack wedging on the proxy (same family as the 2026-08-13 crash).
+- `ble-tracker` heap: free ~66 KB, largest block ~39 KB shortly after boot — check whether it trends down.
+
+**What was set up for next time (all outside this repo, in the user's ESPHome + HA):**
+- Both proxies publish their device log over MQTT (`esphome/<name>/log`, Mosquitto app, `discovery: false`).
+  Needs `mqtt_host` / `mqtt_user` / `mqtt_password` in the ESPHome secrets.
+- HA automation `automation.esphome_ble_proxy_logs_to_logbook` subscribes to `esphome/+/log`, strips ANSI
+  colour codes, keeps `[W]`/`[E]`/`[C]` lines plus anything mentioning `bluetooth_proxy`, and writes them to
+  the **logbook** (`logbook.log`, name `ESPHome log <proxy>`). The recorder keeps ~10 days, so it survives
+  proxy reboots. Read it back with `ha_get_logs(source="logbook", search="ESPHome log", hours_back=N)`.
+- `ble-tracker` also has `Uptime`, `Heap Free`, `Heap Largest Block` and `Reset Reason` entities
+  (`sensor.flur_ble_tracker_*`; the `debug:` component). Not added on the NSPanel — its package may already
+  define the same entity names. A `Reset Reason` other than `software via esp_restart` means a crash/watchdog.
+- Proxy logger level is `INFO` on both. ESPHome rejects a per-tag level more verbose than the global one, so
+  `bluetooth_proxy: DEBUG` with a global `INFO` does not compile; connect/disconnect detail is therefore not
+  captured. Raising the global level to DEBUG on the NSPanel is expensive — only do it deliberately.
+- The `Connecting v3 ...` lines are ~4/min (~5k logbook rows/day). They are kept on purpose during
+  diagnosis (they show whether the proxy was still attempting connects during a hang); exclude them in the
+  automation's regex if the logbook bloat becomes a problem.
+- The ESPHome yaml for the two proxies (`ble-tracker.esphome.yml`, `nspanel.esphome.yml`) was dropped in the
+  repo root as untracked scratch copies of what is flashed. They hold the API/OTA keys — **do not commit them**.
+
+**When it recurs — do this BEFORE restarting the proxies** (the restart destroys the evidence):
+1. Pull the integration diagnostics for the affected entries (`seen_by`, counters, `connect_in_flight`,
+   `lock_held_by`). `seen_by` empty = the proxies stopped scanning that device.
+2. Read the logbook around the failure for both proxies. Look for: a `ble-tracker`/`nspanel` gap in
+   `Connecting` lines (proxy went silent), `Too many connections`/slot warnings, `api`/`mqtt` buffer-full or
+   long-operation warnings, Wi-Fi/API reconnects, and a proxy that stopped logging entirely.
+3. Check `sensor.flur_ble_tracker_reset_reason` / `uptime` history: a reboot with a non-software reason, or an
+   uptime reset, means a crash, not a wedge. Check the heap sensors for a downward trend.
+4. Only then run `script.restart_ble_proxys`.
+If logs show the proxy kept running and logging normally while stations were unreachable, the wedge is inside
+the Bluedroid GATT stack, and the realistic options are ESPHome/ESP-IDF updates or moving traffic off that
+proxy — nothing in `device.py` can fix it.
+
 ## Conventions
 
 - User-facing strings live in `translations/{en,de,es,fr,it,nl}.json` and must be kept in sync across all
