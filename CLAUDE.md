@@ -277,7 +277,9 @@ Blackymas package): at boot it logs `script took 216 ms (max 50)` / `api took 96
    long-operation warnings, Wi-Fi/API reconnects, and a proxy that stopped logging entirely.
 3. Check `sensor.flur_ble_tracker_reset_reason` / `uptime` history: a reboot with a non-software reason, or an
    uptime reset, means a crash, not a wedge. Check the heap sensors for a downward trend.
-4. Only then run `script.restart_ble_proxys`.
+4. Only then restart — preferably **one proxy at a time** (the one with the last failed attempt for the
+   station first, see the fifth incident below) rather than `script.restart_ble_proxys`, so the culprit is
+   identifiable.
 If logs show the proxy kept running and logging normally while stations were unreachable, the wedge is inside
 the Bluedroid GATT stack, and the realistic options are ESPHome/ESP-IDF updates or moving traffic off that
 proxy — nothing in `device.py` can fix it.
@@ -318,6 +320,37 @@ restarting; restart brought it back ~20s later.
      entirely**, so HA can't keep routing through it. Confirm via diagnostics `seen_by` that all four
      stations moved. Wedges stopping after step 2 but not step 1 → NSPanel overload was the cause.
   When reading later incidents, first establish which of these stages was live at the time.
+
+### Fifth incident (2026-10-02 night): one station vanished from both proxies, proxy restart fixed it
+
+Same setup, **test-plan stage 1 live** (`2.1.0-alpha.6`, NSPanel still the main proxy). `tur_ecke` unavailable
+from 00:18 local until the proxies were restarted at 06:53; back ~64s after the restart. Evidence collected
+before the restart:
+
+- **Fast-poll cap confirmed working:** `tur_ecke` was contacted ~1×/min the whole evening (proxy logbook), even
+  though it sat in `Starting Up` 16:52–20:46. No flood this time — so the flood was not the only trigger.
+- `suspected_stranded_slots` 0, `out_of_slots` 0 on all four. Other three stations healthy throughout (~600
+  successful connects each, `couch_ecke` zero failures).
+- **Proxies not wedged:** no `Timeout waiting for teardown` loop on the NSPanel, `ble-tracker` uptime unbroken
+  (no crash), both kept serving the other stations normally.
+- Sequence: 23:04–00:18 occasional 20s connect timeouts (`disconnect timed out`), then 00:14–00:18 five
+  `[E] OPEN_EVT in unexpected state` + `[W] Connection open failed, status=133` for `tur_ecke` — three on
+  `nspanel`, then two on `ble-tracker` (HA failed over). Last attempt 00:17:52 via `ble-tracker`. From then on
+  **neither proxy received a single advert from it** (`seen_by: []`), while both still saw the other three.
+  Station was in `Standby`.
+- Restarting both proxies brought it straight back — so the station itself was fine.
+
+**Working hypothesis (unproven): phantom link-layer connection.** `OPEN_EVT in unexpected state` means the
+ESP controller completed a connection *after* the host side had already given up on it. If that link stays up
+in the controller, the station is connected (to the proxy) and a connected BLE peripheral **stops
+advertising** — which explains "vanished from *both* proxies at once while they see everything else", and why
+only a proxy restart (dropping the link) cures it. The 2026-10-01 evening `pc_ecke` case (`OPEN_EVT in
+unexpected state` on `nspanel`, then `seen_by: []`) fits the same pattern. Nothing in `device.py` can see or
+drop a link the proxy no longer reports. This would be an ESPHome `bluetooth_proxy` / Bluedroid issue.
+
+**Next time, to test it:** collect evidence as usual, then restart **only the proxy that made the last
+`OPEN_EVT in unexpected state` attempt** for that station (not the script that restarts both). If the station
+reappears from that alone, the phantom-connection holder is identified. If not, restart the other one.
 
 ## Conventions
 
