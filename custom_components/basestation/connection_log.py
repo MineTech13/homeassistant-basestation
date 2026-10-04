@@ -62,6 +62,12 @@ class Outcome(StrEnum):
     RECLAIMED = "reclaimed"
     # A connection we could not confirm was closed - the shape of failure that leaks a proxy slot.
     STRANDED = "stranded"
+    # A poll did not even try to connect, because a recent connect timed out (see
+    # BasestationDevice._skip_poll_for_cooldown).
+    SKIPPED = "skipped"
+    # A proxy reported a connection that was not there, and was charged with connect failures so
+    # Home Assistant routes through another one (see BasestationDevice._penalise_connected_proxy).
+    PROXY_PENALISED = "proxy_penalised"
     UNAVAILABLE = "unavailable"
     AVAILABLE = "available"
 
@@ -135,6 +141,8 @@ class ConnectionStats:
     disconnect_cancelled: int = 0
     out_of_slots: int = 0
     proxy_restarting: int = 0
+    connect_skipped_cooldown: int = 0
+    proxy_penalised: int = 0
     lock_timeout: int = 0
     operation_succeeded: int = 0
     operation_failed: int = 0

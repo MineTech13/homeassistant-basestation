@@ -81,6 +81,29 @@ LOCK_HELD_WARN_AGE = 120.0
 # aioesphomeapi update, same caveat as the bleak_retry_connector internals imported above.
 PROXY_RESTARTING_MARKERS = ("ConnectionState.", "not ready yet")
 
+# After a connect times out, polling (not user commands) leaves the station alone for this long.
+# ESPHome proxies log "OPEN_EVT in unexpected state" when the controller completes a link just as
+# the host gives up on it (bleak_esphome's own 20s connect timeout), and a station left connected
+# that way stops advertising until the proxy is restarted. On 2026-10-04 one station took seven
+# back-to-back connect attempts in 3.5 minutes (poll retries plus the info read), each one ending
+# like that, before it vanished from both proxies. Spacing retries out cuts the chances.
+CONNECT_TIMEOUT_COOLDOWN = 180.0
+
+# Message of the bleak_esphome connect failure that ends in that OPEN_EVT race. Our own
+# connection_timeout elapsing (a bare TimeoutError while still waiting to connect) counts too.
+CONNECT_TIMEOUT_MARKERS = ("Timeout waiting for connect response",)
+
+# GATT error an ESPHome proxy returns for a read on a connection it just reported as established.
+# Seen on 2026-10-04 from a proxy whose Bluedroid stack had wedged on one address: every connect
+# "succeeded" in ~0.2s, the first read failed with this, and the proxy then logged "Timeout
+# waiting for teardown". Same message-text fragility caveat as PROXY_RESTARTING_MARKERS.
+PHANTOM_CONNECTION_MARKERS = ("Not connected",)
+
+# How many connect failures to charge a proxy with for one phantom connection (see
+# _penalise_connected_proxy). habluetooth scores a connection path as RSSI minus
+# 0.51 * rssi_diff * failures, so two flips the choice whatever the RSSI gap between two proxies.
+PHANTOM_CONNECTION_PENALTY = 2
+
 type BaseStationDeviceInfoKey = Literal["firmware", "model", "hardware", "manufacturer", "channel", "pair_id"]
 
 
@@ -88,6 +111,20 @@ def _is_proxy_restarting_error(err: Exception) -> bool:
     """Return True if err looks like PROXY_RESTARTING_MARKERS - see that constant for why."""
     message = str(err)
     return all(marker in message for marker in PROXY_RESTARTING_MARKERS)
+
+
+def _is_connect_timeout_error(err: Exception) -> bool:
+    """Return True if a failed connect timed out - see CONNECT_TIMEOUT_COOLDOWN for why it matters."""
+    if isinstance(err, TimeoutError):
+        return True
+    message = str(err)
+    return any(marker in message for marker in CONNECT_TIMEOUT_MARKERS)
+
+
+def _is_phantom_connection_error(err: Exception) -> bool:
+    """Return True if err is a proxy denying a connection it just reported - see PHANTOM_CONNECTION_MARKERS."""
+    message = str(err)
+    return isinstance(err, BleakError) and any(marker in message for marker in PHANTOM_CONNECTION_MARKERS)
 
 
 @dataclass(repr=False)
@@ -144,6 +181,10 @@ class BasestationDevice(ABC):
         self._current_client: BleakClientWithServiceCache | None = None
         self._client_lock = asyncio.Lock()
         self._last_error_out_of_slots = False
+        # Monotonic deadline before which polls don't try to connect - see CONNECT_TIMEOUT_COOLDOWN.
+        self._connect_cooldown_until = 0.0
+        # Last proxy _penalise_connected_proxy warned about, so it warns once per proxy, not per poll.
+        self._last_penalised_proxy: str | None = None
 
         # Tracks an in-flight establish_connection() call that outlives our own willingness to
         # wait for it - see _await_connection().
@@ -192,6 +233,12 @@ class BasestationDevice(ABC):
         if task is None or task.done():
             return None
         return time.monotonic() - self._pending_connect_started
+
+    @property
+    def connect_cooldown_remaining(self) -> float | None:
+        """Return seconds until polls may connect again after a connect timeout, or None if not cooling down."""
+        remaining = self._connect_cooldown_until - time.monotonic()
+        return remaining if remaining > 0 else None
 
     @property
     def lock_held_age(self) -> float | None:
@@ -430,6 +477,7 @@ class BasestationDevice(ABC):
 
         except Exception as err:
             self._record_connect_exception(err, "contacting")
+            self._react_to_attempt_failure(err, client)
         else:
             return result
         finally:
@@ -640,11 +688,18 @@ class BasestationDevice(ABC):
         """Execute a BLE operation with proper connection management."""
         lock_timeout = 20.0 if isinstance(op, BLEOperationWrite) else 10.0
         holder = f"{'write' if isinstance(op, BLEOperationWrite) else 'read'} {op.characteristic_uuid}"
+        # Reads are the periodic state poll; writes are user commands, which always get to try.
+        is_poll = isinstance(op, BLEOperationRead)
 
         if not await self._acquire_lock(lock_timeout, holder):
             return False
 
         try:
+            # Checked only once the lock is held: a poll that queued behind the attempt that
+            # started the cooldown must not go straight on to make another one.
+            if is_poll and self._skip_poll_for_cooldown("state read"):
+                return False
+
             self._last_connection_attempt = time.time()
             max_attempts = MAX_RETRIES if op.retry else 1
 
@@ -652,6 +707,9 @@ class BasestationDevice(ABC):
                 result = await self._execute_single_ble_attempt(op, attempt)
                 if result is not None:
                     return result
+
+                if is_poll and self.connect_cooldown_remaining is not None:
+                    break
 
                 if attempt < max_attempts - 1:
                     delay = BLEAK_OUT_OF_SLOTS_BACKOFF_TIME if self._last_error_out_of_slots else CONNECTION_DELAY
@@ -771,6 +829,84 @@ class BasestationDevice(ABC):
             self.connection_log.record_exception(Phase.OPERATION, Outcome.ERROR, err, context=context)
             _LOGGER.exception("Unexpected error %s %s", context, self.mac)
 
+    def _react_to_attempt_failure(self, err: Exception, client: BleakClientWithServiceCache | None) -> None:
+        """
+        Act on the two failure shapes that leave a proxy in a state the next attempt makes worse.
+
+        `client` is None when the connect itself failed, and set when it connected but the
+        operation on it then failed.
+        """
+        if client is None:
+            if _is_connect_timeout_error(err):
+                self._start_connect_cooldown()
+        elif _is_phantom_connection_error(err):
+            self._penalise_connected_proxy(client)
+
+    def _start_connect_cooldown(self) -> None:
+        self._connect_cooldown_until = time.monotonic() + CONNECT_TIMEOUT_COOLDOWN
+        _LOGGER.debug(
+            "Connect to %s timed out; polls will not try to connect again for %.0fs",
+            self.mac,
+            CONNECT_TIMEOUT_COOLDOWN,
+        )
+
+    def _skip_poll_for_cooldown(self, what: str) -> bool:
+        """Return True (and record it) if a poll should not connect right now - see CONNECT_TIMEOUT_COOLDOWN."""
+        if (remaining := self.connect_cooldown_remaining) is None:
+            return False
+        self.connection_log.stats.connect_skipped_cooldown += 1
+        self.connection_log.record(
+            Phase.CONNECT,
+            Outcome.SKIPPED,
+            detail=f"{what} skipped after a connect timeout",
+        )
+        _LOGGER.debug("Skipping %s for %s, %.0fs of connect cooldown left", what, self.mac, remaining)
+        return True
+
+    def _penalise_connected_proxy(self, client: BleakClientWithServiceCache) -> None:
+        """
+        Make Home Assistant route this station's next connects through a different proxy.
+
+        Home Assistant's Bluetooth wrapper (habluetooth's HaBleakClientWrapper) picks the proxy
+        itself on every connect, ignoring which BLEDevice we pass in. It scores each path by RSSI
+        minus a penalty per recorded connect failure (BaseHaScanner._score_connection_paths as of
+        habluetooth 6.1.0). A proxy that fakes a connection reports it as a *success*, which
+        clears its failure count, so it keeps winning and every poll fails the same way. Charging
+        it with failures by hand is the only lever available from here. It reaches into private
+        habluetooth attributes, so every lookup tolerates them being gone and this degrades to a
+        no-op on an incompatible version. The penalty lasts until that proxy next connects to
+        this station successfully.
+        """
+        scanner = getattr(client, "_connected_scanner", None)
+        add_connect_failure = getattr(scanner, "_add_connect_failure", None)
+        if not callable(add_connect_failure):
+            _LOGGER.debug(
+                "Cannot tell Home Assistant to avoid the proxy for %s: habluetooth internals changed", self.mac
+            )
+            return
+
+        connected_device = getattr(client, "_connected_device", None)
+        address = getattr(connected_device, "address", None) or self.mac
+        for _ in range(PHANTOM_CONNECTION_PENALTY):
+            add_connect_failure(address)
+
+        proxy_name = getattr(scanner, "name", "unknown proxy")
+        self.connection_log.stats.proxy_penalised += 1
+        self.connection_log.record(Phase.CONNECT, Outcome.PROXY_PENALISED, detail=proxy_name)
+        # Once per proxy in a row, not per poll: if no other proxy can reach the station this
+        # repeats every cycle, and the counter already tracks how often.
+        log = _LOGGER.warning if proxy_name != self._last_penalised_proxy else _LOGGER.debug
+        log(
+            "Bluetooth proxy %s reported a connection to basestation %s that was not really there "
+            "(%d time(s) so far); steering the next connects to another proxy. If this keeps "
+            "happening, restart %s",
+            proxy_name,
+            self.mac,
+            self.connection_log.stats.proxy_penalised,
+            proxy_name,
+        )
+        self._last_penalised_proxy = proxy_name
+
     async def _read_standard_characteristics(
         self, client: BleakClientWithServiceCache, info: dict[BaseStationDeviceInfoKey, str]
     ) -> bool:
@@ -823,6 +959,7 @@ class BasestationDevice(ABC):
 
         except Exception as err:
             self._record_connect_exception(err, "reading device info for")
+            self._react_to_attempt_failure(err, client)
         else:
             if std_success or spec_success:
                 return info
@@ -852,8 +989,14 @@ class BasestationDevice(ABC):
             return self._info
 
         try:
+            if self._skip_poll_for_cooldown("device info read"):
+                return self._info
+
             for attempt in range(INFO_READ_RETRIES):
                 if attempt > 0:
+                    if self.connect_cooldown_remaining is not None:
+                        break
+
                     delay = (
                         BLEAK_OUT_OF_SLOTS_BACKOFF_TIME
                         if self._last_error_out_of_slots

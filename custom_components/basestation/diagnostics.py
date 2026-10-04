@@ -124,6 +124,9 @@ def _live_state(device: BasestationDevice) -> dict[str, Any]:
     return {
         "connect_in_flight": device.pending_connect_age is not None,
         "connect_in_flight_age": (round(age, 1) if (age := device.pending_connect_age) is not None else None),
+        "connect_cooldown_remaining": (
+            round(left, 1) if (left := device.connect_cooldown_remaining) is not None else None
+        ),
         "lock_held_by": device.lock_holder,
         "lock_held_age": round(age, 1) if (age := device.lock_held_age) is not None else None,
     }
