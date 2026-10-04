@@ -352,6 +352,54 @@ drop a link the proxy no longer reports. This would be an ESPHome `bluetooth_pro
 `OPEN_EVT in unexpected state` attempt** for that station (not the script that restarts both). If the station
 reappears from that alone, the phantom-connection holder is identified. If not, restart the other one.
 
+### Sixth incident (2026-10-04): two stations, two failure modes, at the same moment
+
+Same setup, **test-plan stage 1 still live** (`2.1.0-alpha.6`). All four stations were switched on at 03:41 local and
+polled at ~1 connect/min each (fast-poll cap held, no flood). From ~04:10 local two stations went bad. Evidence was
+pulled via the HA MCP before any restart.
+
+- **`couch_ecke` (F8:…:F6:2F): phantom-link pattern, now attributed exactly.** Every `[E] OPEN_EVT in unexpected
+  state` / `status=133` between 04:10 and 04:13:32 landed **~20.0s after a `Connecting v3` to this station**: seven
+  in 3.5 min, four on `nspanel` and **three on `ble-tracker`**. 20s is bleak_esphome's own connect timeout (`Timeout
+  waiting for connect response … after 20.0s, disconnect timed out`), not ours, so the link is completing in the
+  controller just as the host cancels it. The last attempt was via `ble-tracker` (04:13:12 → OPEN_EVT 04:13:32). After
+  that neither proxy saw the station again (`seen_by: []`). The attempts came from the state poll's retry, the state poll
+  and the info read, in quick succession. **Not NSPanel-specific**, so test-plan stage 2 alone may not prevent it.
+- **`pc_ecke` (DD:28:…:58:C1): new mode, a proxy faking connections.** Starting with the same storm, every connect via
+  `nspanel` "succeeded" in ~0.18s. The first read then failed with `BleakError … error=-1 description=Not connected`
+  (~780×), and exactly 10s later `nspanel` logged `[E] [0] Timeout waiting for teardown, forcing IDLE`. Every
+  teardown timeout in the logbook followed a DD:28 connect. The other stations used the same slot fine. Both proxies
+  still saw the station (nspanel -74, ble-tracker -86). It flapped ~40× in 8h and only recovered when HA happened to route
+  via `ble-tracker`. **Why HA kept picking nspanel** (habluetooth 6.1.0): the wrapper re-picks the proxy on every
+  connect by RSSI minus `0.51 × rssi_diff × connect_failures[addr]`, ignoring the BLEDevice we pass. The fake
+  success calls `_finished_connecting(addr, True)`, which *clears* that proxy's failure count, so it always won.
+- `suspected_stranded_slots` 0 and `out_of_slots` 0. `ble-tracker` up ~55h, healthy heap (83 KB free / 55 KB block).
+  The unshielded-disconnect theory is still not implicated.
+- **Stage-1 verdict:** wedges happen at ~1 connect/min/station, so the flood was not required. Stage 2 (dedicated
+  proxy, NSPanel proxy removed) is back in play, with the caveat above.
+- **Restart result:** _pending. Plan: ble-tracker first (last Couch attempt), then nspanel. Record which restart
+  brought back which station._
+
+**What changed in response (`device.py`, unreleased at time of writing):**
+- **Connect-timeout cooldown** (`CONNECT_TIMEOUT_COOLDOWN` = 180s). After a connect fails by timing out (our own wait
+  or `CONNECT_TIMEOUT_MARKERS`), state polls and info reads skip connecting until it passes. Retries inside
+  the same poll stop too. The check runs after the lock is taken, so a poll queued behind the failing attempt
+  doesn't fire straight after it. User writes (on/off/standby/identify) are never skipped. Skips don't count as
+  failures. Visible as `connect_skipped_cooldown` / `Outcome.SKIPPED` and `live.connect_cooldown_remaining` in
+  diagnostics.
+- **Phantom-connection proxy penalty** (`_penalise_connected_proxy`). When an operation on a just-established connection
+  fails with `PHANTOM_CONNECTION_MARKERS` (`Not connected`), the proxy that "connected" is charged with
+  `PHANTOM_CONNECTION_PENALTY` (2) connect failures via habluetooth's private `client._connected_scanner` →
+  `_add_connect_failure(address)`. Two failures always outweigh the RSSI gap between the top two paths, so HA picks the
+  other proxy next time. The penalty clears when that proxy next succeeds for the station. Uses private habluetooth
+  internals with `getattr` fallbacks (degrades to a no-op), so **re-check on habluetooth bumps**. It logs a WARNING
+  once per proxy in a row. Visible as `proxy_penalised` / `Outcome.PROXY_PENALISED`. It cannot help a station only one
+  proxy can reach, and does nothing for the Couch-type phantom link (the station is gone from every proxy).
+
+Both are unverified on hardware. After deploying, expect: after a connect timeout, at most one connect per 3 min to
+that station. On a recurrence of the PC Ecke mode, one WARNING naming nspanel, then its connects moving to
+`ble-tracker` in the proxy logbook, with no sustained teardown loop for that address.
+
 ## Conventions
 
 - User-facing strings live in `translations/{en,de,es,fr,it,nl}.json` and must be kept in sync across all
