@@ -277,9 +277,10 @@ Blackymas package): at boot it logs `script took 216 ms (max 50)` / `api took 96
    long-operation warnings, Wi-Fi/API reconnects, and a proxy that stopped logging entirely.
 3. Check `sensor.flur_ble_tracker_reset_reason` / `uptime` history: a reboot with a non-software reason, or an
    uptime reset, means a crash, not a wedge. Check the heap sensors for a downward trend.
-4. Only then restart — preferably **one proxy at a time** (the one with the last failed attempt for the
-   station first, see the fifth incident below) rather than `script.restart_ble_proxys`, so the culprit is
-   identifiable.
+4. Only then restart — preferably **one proxy at a time** rather than `script.restart_ble_proxys`, so the culprit
+   is identifiable. Start with a proxy showing a `Timeout waiting for teardown` loop, if any; otherwise the one with
+   the last failed attempt for the station. The sixth incident showed the last-attempt heuristic can pick the wrong
+   proxy.
 If logs show the proxy kept running and logging normally while stations were unreachable, the wedge is inside
 the Bluedroid GATT stack, and the realistic options are ESPHome/ESP-IDF updates or moving traffic off that
 proxy — nothing in `device.py` can fix it.
@@ -377,8 +378,13 @@ pulled via the HA MCP before any restart.
   The unshielded-disconnect theory is still not implicated.
 - **Stage-1 verdict:** wedges happen at ~1 connect/min/station, so the flood was not required. Stage 2 (dedicated
   proxy, NSPanel proxy removed) is back in play, with the caveat above.
-- **Restart result:** _pending. Plan: ble-tracker first (last Couch attempt), then nspanel. Record which restart
-  brought back which station._
+- **Restart result (one at a time, 15:15 local):** restarting `ble-tracker` alone (it made the last Couch attempt)
+  changed nothing: Couch was still `seen_by: []` 2.5 min later. Restarting `nspanel` brought **both** back within
+  ~25s (PC Ecke 15:18:31, Couch 15:18:40, seen by both proxies again). So **nspanel held Couch's phantom link** even
+  though ble-tracker made the last attempt. Its earlier OPEN_EVT for Couch (04:13:10, slot `[1]`) is the likely
+  holder. It also cured the PC Ecke "Not connected" mode, so both symptoms were one wedge on nspanel. Runbook update:
+  the "last attempt" heuristic is unreliable; restart first the proxy showing a `Timeout waiting for teardown` loop,
+  if any.
 
 **What changed in response (`device.py`, unreleased at time of writing):**
 - **Connect-timeout cooldown** (`CONNECT_TIMEOUT_COOLDOWN` = 180s). After a connect fails by timing out (our own wait
