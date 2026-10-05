@@ -429,6 +429,9 @@ on 2026-10-06 ~01:05 local, before any restart.
   was just never exercised against it. **Fix:** write `scanner._connect_failures[address]` (declared `cdef public
   dict`, reachable in both builds) and log a WARNING once if the internals are missing. Verified against the
   compiled habluetooth 6.1.0: nspanel's path score for DD:28 drops from -68 to -87.4, below ble-tracker's -87.
+- **Restart result:** restarting **only `nspanel`** (01:10 local) brought both back within ~45s (PC Ecke 01:10:16,
+  Tür Ecke 01:10:48, seen by both proxies again). `ble-tracker` was not restarted. That confirms nspanel held Tür's
+  phantom link too.
 - Every phantom link so far that could be attributed to a proxy (sixth incident, and this one) sits on `nspanel`.
   Together with the teardown loops, that is the strongest case yet for test-plan stage 2 (take `bluetooth_proxy` off the
   NSPanel).
