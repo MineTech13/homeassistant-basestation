@@ -185,6 +185,7 @@ class BasestationDevice(ABC):
         self._connect_cooldown_until = 0.0
         # Last proxy _penalise_connected_proxy warned about, so it warns once per proxy, not per poll.
         self._last_penalised_proxy: str | None = None
+        self._penalty_unsupported_warned = False
 
         # Tracks an in-flight establish_connection() call that outlives our own willingness to
         # wait for it - see _await_connection().
@@ -872,23 +873,34 @@ class BasestationDevice(ABC):
         minus a penalty per recorded connect failure (BaseHaScanner._score_connection_paths as of
         habluetooth 6.1.0). A proxy that fakes a connection reports it as a *success*, which
         clears its failure count, so it keeps winning and every poll fails the same way. Charging
-        it with failures by hand is the only lever available from here. It reaches into private
-        habluetooth attributes, so every lookup tolerates them being gone and this degrades to a
-        no-op on an incompatible version. The penalty lasts until that proxy next connects to
+        it with failures by hand is the only lever available from here.
+
+        This writes the scanner's failure dict directly rather than calling its
+        _add_connect_failure() helper: Home Assistant ships habluetooth compiled with Cython, where
+        that helper is a cdef method invisible from Python (the first version of this called it,
+        and silently did nothing in production), while _connect_failures is declared
+        `cdef public dict` and so stays reachable in both the compiled and pure-Python builds.
+        These are still private habluetooth internals, so every lookup tolerates them being gone;
+        that is logged as a warning once, because a penalty that quietly does nothing is exactly
+        how the first version went unnoticed. The penalty lasts until that proxy next connects to
         this station successfully.
         """
         scanner = getattr(client, "_connected_scanner", None)
-        add_connect_failure = getattr(scanner, "_add_connect_failure", None)
-        if not callable(add_connect_failure):
-            _LOGGER.debug(
-                "Cannot tell Home Assistant to avoid the proxy for %s: habluetooth internals changed", self.mac
+        connect_failures = getattr(scanner, "_connect_failures", None)
+        if not isinstance(connect_failures, dict):
+            log = _LOGGER.warning if not self._penalty_unsupported_warned else _LOGGER.debug
+            log(
+                "Cannot steer basestation %s away from a Bluetooth proxy that faked a connection: "
+                "habluetooth's internals are not what this integration expects (scanner: %s)",
+                self.mac,
+                type(scanner).__name__,
             )
+            self._penalty_unsupported_warned = True
             return
 
         connected_device = getattr(client, "_connected_device", None)
         address = getattr(connected_device, "address", None) or self.mac
-        for _ in range(PHANTOM_CONNECTION_PENALTY):
-            add_connect_failure(address)
+        connect_failures[address] = connect_failures.get(address, 0) + PHANTOM_CONNECTION_PENALTY
 
         proxy_name = getattr(scanner, "name", "unknown proxy")
         self.connection_log.stats.proxy_penalised += 1

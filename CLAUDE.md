@@ -396,9 +396,11 @@ pulled via the HA MCP before any restart.
 - **Phantom-connection proxy penalty** (`_penalise_connected_proxy`). When an operation on a just-established connection
   fails with `PHANTOM_CONNECTION_MARKERS` (`Not connected`), the proxy that "connected" is charged with
   `PHANTOM_CONNECTION_PENALTY` (2) connect failures via habluetooth's private `client._connected_scanner` →
-  `_add_connect_failure(address)`. Two failures always outweigh the RSSI gap between the top two paths, so HA picks the
+  `_connect_failures[address]` (originally `_add_connect_failure(address)`, which was a silent no-op under HA's
+  compiled habluetooth; see the seventh incident). Two failures always outweigh the RSSI gap between the top two paths, so HA picks the
   other proxy next time. The penalty clears when that proxy next succeeds for the station. Uses private habluetooth
-  internals with `getattr` fallbacks (degrades to a no-op), so **re-check on habluetooth bumps**. It logs a WARNING
+  internals with `getattr` fallbacks (warns once if they're missing), so **re-check on habluetooth bumps, against
+  the compiled build**. It logs a WARNING
   once per proxy in a row. Visible as `proxy_penalised` / `Outcome.PROXY_PENALISED`. It cannot help a station only one
   proxy can reach, and does nothing for the Couch-type phantom link (the station is gone from every proxy).
 
@@ -406,6 +408,30 @@ Both are unverified on hardware. After deploying, expect: after a connect timeou
 that station. On a recurrence of the PC Ecke mode, one WARNING naming nspanel, then its connects moving to
 `ble-tracker` in the proxy logbook, with no sustained teardown loop for that address.
 
+
+### Seventh incident (2026-10-05): same pairing again, first run of the sixth incident's mitigations
+
+Same setup, test-plan stage 1, now running the sixth incident's `dev` build (cooldown + proxy penalty). Evidence pulled
+on 2026-10-06 ~01:05 local, before any restart.
+
+- **`tur_ecke` (F5:55): phantom link from a single attempt.** Last connect via `nspanel` 07:58:07, one `OPEN_EVT in
+  unexpected state` at 07:58:27 (exactly 20s), and the station was gone from both proxies from then on
+  (unavailable 17h+, `seen_by: []`). The cooldown fired as designed (`connect_skipped_cooldown` 4, about 3 attempts
+  in total instead of a storm), but **one attempt was enough**, so the cooldown can't prevent this, only reduce
+  how many chances there are.
+- **`pc_ecke` (DD:28): "Not connected" mode again,** starting 58s later (07:59:25), with the `nspanel` `Timeout waiting for
+  teardown` loop tied to DD:28 connects. It was still running at 01:06 the next night (1313 failures, 57
+  unavailable flips). This is the second time in a row that a phantom link on nspanel was followed by exactly this mode
+  on PC Ecke.
+- **The proxy penalty never fired (`proxy_penalised` 0). Bug:** HA ships habluetooth **compiled with Cython**.
+  `BaseHaScanner._add_connect_failure` is a `cdef` method there, invisible from Python, so the `getattr` fallback
+  turned the penalty into a silent no-op (a DEBUG line only). The dev box had the same compiled build; the first version
+  was just never exercised against it. **Fix:** write `scanner._connect_failures[address]` (declared `cdef public
+  dict`, reachable in both builds) and log a WARNING once if the internals are missing. Verified against the
+  compiled habluetooth 6.1.0: nspanel's path score for DD:28 drops from -68 to -87.4, below ble-tracker's -87.
+- Every phantom link so far that could be attributed to a proxy (sixth incident, and this one) sits on `nspanel`.
+  Together with the teardown loops, that is the strongest case yet for test-plan stage 2 (take `bluetooth_proxy` off the
+  NSPanel).
 ## Conventions
 
 - User-facing strings live in `translations/{en,de,es,fr,it,nl}.json` and must be kept in sync across all
