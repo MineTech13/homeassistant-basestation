@@ -429,6 +429,12 @@ on 2026-10-06 ~01:05 local, before any restart.
   was just never exercised against it. **Fix:** write `scanner._connect_failures[address]` (declared `cdef public
   dict`, reachable in both builds) and log a WARNING once if the internals are missing. Verified against the
   compiled habluetooth 6.1.0: nspanel's path score for DD:28 drops from -68 to -87.4, below ble-tracker's -87.
+- **Test-plan status after this incident (agreed 2026-10-06):** stage **1b** is live: `dev` `dd27c4e` (the
+  cooldown plus the *working* proxy penalty), NSPanel still the main proxy, installed and HA restarted at 01:15 local.
+  Wait for one more failure under 1b, then go to stage 2: the user replaces the NSPanel's Bluetooth proxy with a
+  dedicated ESP32 BLE proxy in the room. Known 1b side effect: after an HA restart a station whose first connect times
+  out (all four connect at once) stays unavailable ~4 min until the cooldown expires. Seen once (Tür/Bett, back at
+  01:19), harmless.
 - **Restart result:** restarting **only `nspanel`** (01:10 local) brought both back within ~45s (PC Ecke 01:10:16,
   Tür Ecke 01:10:48, seen by both proxies again). `ble-tracker` was not restarted. That confirms nspanel held Tür's
   phantom link too.
