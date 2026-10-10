@@ -450,6 +450,10 @@ the "one more failure under 1b" the seventh incident was waiting for. It happene
 looked at until 2026-10-11, so nothing was collected live: no diagnostics from the time, and HA's own log for that day is
 gone (see the logging notes below). Reconstructed afterwards from the proxy logbook and the recorder.
 
+**Proxy placement (from the user, matches RSSI):** `nspanel` is in the room with the stations, `ble-tracker` is far away.
+RSSI nspanel / ble-tracker: Tür -63/-95, Bett -74/-97, Couch -77/-92, PC -85/-97. So "steer away from nspanel" means
+"steer onto a link at the edge of range". Keep this in mind for any penalty tuning.
+
 - **`pc_ecke` (DD:28): phantom link on `nspanel`.** `Connecting v3` to DD:28 on `nspanel` slot `[0]` at 04:23:43.5, then
   `[E] [0] OPEN_EVT in unexpected state` + `status=133` at 04:24:03.6, i.e. 20.1s later (bleak_esphome's timeout again). After
   that **no proxy attempted DD:28 again** until the restart, consistent with it no longer advertising (`seen_by` was not
@@ -505,6 +509,22 @@ nothing is lost, but each abandoned connect now produced an ERROR (6 more betwee
 That also never cancels the task, but it doesn't register the logging callback. Checked with a stand-in script on
 Python 3.14.6 and 3.13: `shield` logs `… exception in shielded future`, `wait` logs nothing, the task is never
 cancelled in either, and a waiter still present gets the exception from `task.result()`.
+
+**Check-in 2026-10-10 ~02:57 local (before a user-requested HA restart): clean.** Covers 31.5h since the 10-08 19:22 HA
+restart, still stage 1b.
+- Each station ~1,930 connects, all succeeded. `became_unavailable`, `proxy_penalised`, `suspected_stranded_slots`,
+  `out_of_slots`, `lock_timeout` all 0. The only failure is Bett Ecke's post-restart connect timeout (cooldown handled it).
+  All four seen by both proxies. Switch history shows only user on/off, never `unavailable`.
+- Proxy logbook: no `[E]` lines at all (no `OPEN_EVT in unexpected state`, no teardown loop). ble-tracker uptime unbroken,
+  heap ~93 KB. No basestation errors in the HA log.
+- New, minor: nspanel logged `[W] … Connected reply deferred, TCP buffer full` 3× (10-09 17:32, 17:41, 23:42), once
+  for each of different stations. That is its API send buffer to HA filling briefly during a connect. Harmless alone,
+  another sign of NSPanel load.
+- **Tooling gotcha:** `ha_get_logs(source="logbook", hours_back=N)` returns at most ~24h even for larger N. A 32h search
+  silently ended at 10-09 18:56 and looked like the proxy MQTT logging had stopped; it hadn't (the forwarding automation is
+  `automation.ble_proxy_logs_ins_logbuch`, not the name given in the third incident). Read longer windows in ≤24h chunks
+  via `end_time`.
+- Stable since 2026-10-06 06:51. The plan is unchanged: weekend on 1b, then stage 2.
 
 **Follow-up check, 2026-10-12 ~19:15:** no failure since the eighth incident. No teardown loop and no new `OPEN_EVT` after
 10-11 15:51. The only unavailable blip (PC + Couch, 10-11 20:42–20:46) followed an HA restart at 20:42:19, which is the
