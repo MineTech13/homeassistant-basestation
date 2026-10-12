@@ -441,6 +441,67 @@ on 2026-10-06 ~01:05 local, before any restart.
 - Every phantom link so far that could be attributed to a proxy (sixth incident, and this one) sits on `nspanel`.
   Together with the teardown loops, that is the strongest case yet for test-plan stage 2 (take `bluetooth_proxy` off the
   NSPanel).
+
+### Eighth incident (2026-10-06 early morning): the stage-1b failure, same pairing with the roles swapped
+
+Same setup, **test-plan stage 1b live** (`dev` `dd27c4e`, shows as `2.1.0-alpha.6`, NSPanel still the main proxy). This is
+the "one more failure under 1b" the seventh incident was waiting for. It happened ~3h after 1b went live and was not
+looked at until 2026-10-11, so nothing was collected live: no diagnostics from the time, and HA's own log for that day is
+gone (see the logging notes below). Reconstructed afterwards from the proxy logbook and the recorder.
+
+- **`pc_ecke` (DD:28): phantom link on `nspanel`.** `Connecting v3` to DD:28 on `nspanel` slot `[0]` at 04:23:43.5, then
+  `[E] [0] OPEN_EVT in unexpected state` + `status=133` at 04:24:03.6, i.e. 20.1s later (bleak_esphome's timeout again). After
+  that **no proxy attempted DD:28 again** until the restart, consistent with it no longer advertising (`seen_by` was not
+  captured). Unavailable 04:29 → 06:51.
+- **`tur_ecke` (F5:55): "Not connected" mode on `nspanel`, starting 54s later.** From 04:24:47 every F5:55 connect via
+  `nspanel` was followed ~10s later by `[E] [0] Timeout waiting for teardown, forcing IDLE`, about twice a minute (the
+  poll plus its retry) until the restart. That's 201 teardown lines 04:24–06:48, all tied to F5:55. Its last-error sensor
+  confirms `Bluetooth GATT Error … error=-1 description=Not connected`. This is the **third time in a row** that a
+  phantom link on nspanel was followed within about a minute by this mode for another station through nspanel. Tür
+  and PC swapped roles compared with the seventh incident, so which station gets which mode is not fixed.
+- **The proxy penalty fired, but didn't stick.** Tür did get moved to `ble-tracker` at 05:01, 05:13, 05:28, 05:37,
+  05:57 and 06:13. Each move succeeded (switch back to `on`), but it lasted only 1–3 polls before HA routed it back
+  to `nspanel`. Most in-poll retries straight after a penalised failure also went back to nspanel (e.g. 04:24:47 →
+  04:24:59, 04:26:09 → 04:26:21). Tür went `unavailable` 8 times. The constant's comment says two failures
+  "flip the choice whatever the RSSI gap", but that only holds when the other path carries no penalty of its own.
+  In habluetooth 6.1.0 `_score_connection_paths` also subtracts `1.01 × rssi_diff` per connect in progress on that
+  scanner, `0.51 × rssi_diff` per failure that scanner has for the address, and `0.76 × rssi_diff` when it is on its last free slot. It
+  also only scores scanners that currently have a fresh advert for the address. A +2 penalty on nspanel
+  (−1.02 × diff) loses to any one of those on `ble-tracker`. `_connect_failures` is only cleared on scanner
+  (un)register or a success on that scanner, so the count does not decay. Which of these sent Tür back here is
+  **unknown**: it needs habluetooth's own INFO line (below). Tür's own `ble-tracker` connects 04:18–04:23 had
+  succeeded, so it was not a failure count on ble-tracker.
+- **Recovery:** `script.restart_ble_proxys` (both proxies, not one at a time) at 06:50:25. NSPanel was booted by 06:50:38,
+  and all four were connecting again by 06:51:54. Since both were restarted, the restart itself does not
+  identify the holder, but the logbook does: the only `OPEN_EVT` was on nspanel.
+- **Afterwards, through 2026-10-11 ~20:30:** no teardown loop at all, and nothing in the logbook pattern-matches this
+  incident. There were four `OPEN_EVT`s, all on `ble-tracker` (10-06 19:28, 10-11 02:03, 15:44, 15:51), and none led to
+  a vanish. `ble-tracker` has been up since the 06:50 restart (reset reason `Reboot request from api`, heap ~93 KB free /
+  56 KB largest block). The other unavailable blips (PC 10-07 07:03–07:08, PC 10-11 01:16–01:20, all four at 10-06
+  01:15) are ~4 min each. The 10-11 01:16 one follows an HA restart at 01:15:40: the known 1b cooldown side effect.
+  `suspected_stranded_slots` / out-of-slots counters 0 everywhere.
+
+**Stage-1b verdict:** cooldown and penalty reduce the damage but don't prevent it. One 20s connect timeout on nspanel was again
+enough to create a phantom link and, with it, the fake-connection mode for a second station. All three phantom links
+that could be attributed to a proxy (sixth, seventh, eighth incidents) sit on `nspanel`. **Next step per the test plan is
+stage 2:** a dedicated ESP32 proxy in the room, and `bluetooth_proxy` removed from the NSPanel.
+
+**Logging gaps found while reconstructing this, fix before the next incident:**
+- HA's journal only reached back to 2026-10-07 13:19 when read on 10-11. `starlink` logs a traceback every 5s
+  (~20k lines/h) and pushes everything else out within ~4 days. Either fix or disable that integration, or pull HA's log
+  promptly after an incident. The penalty WARNING for this incident could not be checked because of it.
+- Add `habluetooth.wrappers: info` to HA's `logger:`. On every connect it logs `Found N connection path(s), preferred order:`
+  with each proxy's RSSI, `failures=`, `in_progress=`, `slots=free/total` and `score=`. That is the one line that shows why
+  a penalised proxy was still picked. It costs about one line per connect (~4/min for four stations).
+
+**New log noise, not a fault:** HA 2026.10 runs Python 3.14.6, whose `asyncio.shield()` now attaches
+`_log_on_exception` to the inner future once the outer is cancelled. Every connect `_await_connection()` stopped waiting
+for that later fails is now logged as `ERROR … Error doing job: BleakNotFoundError exception in shielded future (task:
+None)` with a traceback. The traceback includes `device.py … in _on_connect_task_done` only because that callback's
+`task.result()` re-raised it. The failure is already recorded in `connection_log` (`context="nobody waiting"`), so
+nothing is lost, but each abandoned connect now produces an ERROR. Avoiding it means waiting on the task without
+`shield()` (e.g. `asyncio.wait({task}, timeout=...)`, which never cancels the task) — not done yet.
+
 ## Conventions
 
 - User-facing strings live in `translations/{en,de,es,fr,it,nl}.json` and must be kept in sync across all
