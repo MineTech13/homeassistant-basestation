@@ -360,11 +360,9 @@ class BasestationDevice(ABC):
         # cancelling it even here: if it doesn't finish in time, it'll still get closed by
         # _on_connect_task_done whenever it does, just without this method waiting around for it.
         if (task := self._pending_connect_task) and not task.done():
-            try:
-                async with asyncio.timeout(5.0):
-                    await asyncio.shield(task)
-            except Exception as e:
-                _LOGGER.debug("Pending connect for %s did not finish during cleanup: %s", self.mac, e)
+            _, pending = await asyncio.wait({task}, timeout=5.0)
+            if pending:
+                _LOGGER.debug("Pending connect for %s did not finish during cleanup", self.mac)
 
         self._available = False
 
@@ -498,7 +496,7 @@ class BasestationDevice(ABC):
         allowed to finish naturally - CancelledError isn't one of the exceptions its retry loop
         catches, so cancelling it from outside (e.g. because our own connection_timeout elapsed)
         skips that cleanup entirely and can leave an ESPHome proxy holding a connection slot
-        forever, regardless of how generous the timeout is. So the connect itself is shielded:
+        forever, regardless of how generous the timeout is. So the connect itself is never cancelled:
         giving up here only stops us *waiting* for it, never the attempt itself. If another
         attempt (or the next poll cycle) comes looking for a connection before this one resolves,
         it reuses this same in-flight task instead of racing a second, competing connection to the
@@ -530,7 +528,13 @@ class BasestationDevice(ABC):
         started = self._pending_connect_started
         self._pending_connect_waiters += 1
         try:
-            client = await asyncio.shield(task)
+            # asyncio.wait() never cancels the task when we are cancelled, same as shield(), but
+            # unlike shield() on Python 3.14.6+ it doesn't log the task's eventual exception as an
+            # ERROR ("... exception in shielded future") once our wait has been abandoned. Waiters
+            # still here get the exception from task.result(); if none are left,
+            # _on_connect_task_done records it.
+            await asyncio.wait({task})
+            client = task.result()
         except asyncio.CancelledError:
             # Our wait was cancelled - almost always connection_timeout elapsing in the caller,
             # not the connect itself being torn down. The attempt keeps running by design; record
@@ -645,7 +649,7 @@ class BasestationDevice(ABC):
         Nothing here changes the outcome - it's purely so that a disconnect which fails, or which
         gets torn down part-way through, leaves a trace. That matters because these calls are the
         one connection path still reachable by an enclosing timeout: unlike the initial connect
-        (which _await_connection shields), a disconnect running when the coordinator's overall
+        (which _await_connection never cancels), a disconnect running when the coordinator's overall
         update timeout expires is cancelled where it stands, which is a plausible way to leave an
         ESPHome proxy holding a slot. If that is what's happening, `disconnect_cancelled` in the
         diagnostics will be non-zero and will have climbed at the moment the device went

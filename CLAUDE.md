@@ -100,8 +100,9 @@ Two non-obvious `bleak_retry_connector` internals worth remembering here:
 
 **Current fix (unverified against real hardware yet — watch proxy slot counts after deploying):** stop
 racing `establish_connection()` with an external timeout at all. `BasestationDevice._await_connection()`
-launches it as a tracked background task and awaits it via `asyncio.shield()` — if our wait times out, only
-*our waiting* is abandoned, the connect keeps running to a natural conclusion no matter what. Concurrent/
+launches it as a tracked background task and awaits it via `asyncio.wait({task})` (originally `asyncio.shield()`,
+see the eighth incident for why that changed) — if our wait times out, only *our waiting* is abandoned, the
+connect keeps running to a natural conclusion no matter what. Concurrent/
 subsequent callers reuse the same in-flight task instead of racing a second connection. If a connection
 succeeds after everyone gave up on it, `_on_connect_task_done()` / `_close_abandoned_client()` disconnect it
 immediately so it can never sit there holding a slot. `cleanup()` (entry unload) gives any still-pending
@@ -499,8 +500,16 @@ stage 2:** a dedicated ESP32 proxy in the room, and `bluetooth_proxy` removed fr
 for that later fails is now logged as `ERROR … Error doing job: BleakNotFoundError exception in shielded future (task:
 None)` with a traceback. The traceback includes `device.py … in _on_connect_task_done` only because that callback's
 `task.result()` re-raised it. The failure is already recorded in `connection_log` (`context="nobody waiting"`), so
-nothing is lost, but each abandoned connect now produces an ERROR. Avoiding it means waiting on the task without
-`shield()` (e.g. `asyncio.wait({task}, timeout=...)`, which never cancels the task) — not done yet.
+nothing is lost, but each abandoned connect now produced an ERROR (6 more between 10-11 and 10-12). **Fixed on
+`dev` 2026-10-12:** `_await_connection()` and `cleanup()` now wait with `asyncio.wait({task})` instead of `shield()`.
+That also never cancels the task, but it doesn't register the logging callback. Checked with a stand-in script on
+Python 3.14.6 and 3.13: `shield` logs `… exception in shielded future`, `wait` logs nothing, the task is never
+cancelled in either, and a waiter still present gets the exception from `task.result()`.
+
+**Follow-up check, 2026-10-12 ~19:15:** no failure since the eighth incident. No teardown loop and no new `OPEN_EVT` after
+10-11 15:51. The only unavailable blip (PC + Couch, 10-11 20:42–20:46) followed an HA restart at 20:42:19, which is the
+known 1b cooldown side effect; another restart at 10-12 02:50 caused none. Counters on all four are low (≤2 connection
+failures since that restart), `suspected_stranded_slots` 0. Stage 1b is still live, NSPanel still the main proxy.
 
 ## Conventions
 
