@@ -568,6 +568,11 @@ state is only our own guess from the last command sent.
   `vX.Y.Z-alpha.00N` spelling.
 - Order: lint gate (`ruff format --check . && ruff check . && mypy custom_components/basestation`) → bump
   commit → push `dev` → tag → `gh release create <tag> --prerelease --target dev`.
+- **V1 test builds** (for #4) are cut from the V1 branch, not `dev`: version `<dev version>+v1test.N` (e.g.
+  `2.1.0-alpha.7+v1test.1`), tag `vX.Y.Z-alpha.00N-v1test.00M`. Build metadata rather than a fourth pre-release
+  segment because `pyproject.toml` must be PEP 440: ruff's RUF200 rejects `2.1.0-alpha.7.v1test.1`, while
+  `+v1test.1` is valid PEP 440 and valid SemVer for hassfest. Release notes must say the V1 PR stays open
+  for at least one to two months and that later `dev` pre-releases don't contain the V1 changes.
 - Pre-releases are cut from `dev`. Exception: `v2.1.0-alpha.004` was tagged on the since-deleted `alt-test`
   branch (keep-alive connection reuse + verified-command loop, never merged) — it is not an ancestor of
   `alpha.005` or later, so compare links should go from `alpha.003`.
