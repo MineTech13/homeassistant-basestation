@@ -19,7 +19,7 @@
       },
       "pair_id": {
         "title": "Vive Basestation Pair ID",
-        "description": "Enter the pair ID for your Vive basestation \"{device_name}\". This is required to control V1 basestations. The pair ID is typically a hexadecimal value like '1A2B3C4D'.",
+        "description": "Enter the pair ID of your Vive base station \"{device_name}\". It is the 8-character ID printed on the back of the station (sometimes called BSID), e.g. '1A2B3C4D'. Its last 4 characters are also the end of the station's Bluetooth name (\"HTC BS ...\"). The station silently ignores on/off commands with a wrong ID.",
         "data": {
           "pair_id": "Pair ID (hexadecimal)"
         }
@@ -27,7 +27,8 @@
     },
     "error": {
       "invalid_mac": "Invalid MAC address format. Please use format like AA:BB:CC:DD:EE:FF",
-      "invalid_pair_id": "Invalid pair ID format. Enter a valid hexadecimal value (e.g., 1A2B3C4D)",
+      "invalid_pair_id": "Invalid pair ID. Enter the 8-character hexadecimal ID from the back of the station (e.g. 1A2B3C4D)",
+      "pair_id_mismatch": "This ID does not belong to this base station: its last 4 characters must match the end of the station's Bluetooth name (\"HTC BS ...\"). Check the ID on the back of the station",
       "invalid_data": "Invalid data provided",
       "unknown": "Unexpected error occurred"
     },

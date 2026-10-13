@@ -19,7 +19,7 @@
       },
       "pair_id": {
         "title": "ID de emparejamiento Vive Basestation",
-        "description": "Ingrese el ID de emparejamiento para su estación base Vive \"{device_name}\". Esto es necesario para controlar las estaciones base V1. El ID de emparejamiento suele ser un valor hexadecimal como '1A2B3C4D'.",
+        "description": "Ingrese el ID de emparejamiento de su estación base Vive \"{device_name}\". Es el ID de 8 caracteres impreso en la parte trasera de la estación (a veces llamado BSID), p. ej. '1A2B3C4D'. Sus últimos 4 caracteres también son el final del nombre Bluetooth de la estación (\"HTC BS ...\"). Con un ID incorrecto, la estación ignora los comandos de encendido/apagado sin mostrar ningún error.",
         "data": {
           "pair_id": "ID de emparejamiento (hexadecimal)"
         }
@@ -27,7 +27,8 @@
     },
     "error": {
       "invalid_mac": "Formato de dirección MAC no válido. Utilice un formato como AA:BB:CC:DD:EE:FF",
-      "invalid_pair_id": "Formato de ID de emparejamiento no válido. Ingrese un valor hexadecimal válido (ej. 1A2B3C4D)",
+      "invalid_pair_id": "ID de emparejamiento no válido. Ingrese el ID hexadecimal de 8 caracteres de la parte trasera de la estación (ej. 1A2B3C4D)",
+      "pair_id_mismatch": "Este ID no pertenece a esta estación base: sus últimos 4 caracteres deben coincidir con el final del nombre Bluetooth de la estación (\"HTC BS ...\"). Compruebe el ID en la parte trasera de la estación",
       "invalid_data": "Datos proporcionados no válidos",
       "unknown": "Ocurrió un error inesperado"
     },

@@ -109,6 +109,12 @@ scan on
 - **Windows**: Use "Microsoft Bluetooth LE Explorer" from Windows Store
 - **SteamVR**: Check device serial numbers in SteamVR settings
 
+### V1 (HTC Vive) Pair ID
+
+V1 base stations need their **pair ID** to accept on/off commands: the 8-character ID printed on the back of the
+station (sometimes called BSID), e.g. `1A2B3C4D`. Its last 4 characters also end the station's Bluetooth name
+(`HTC BS …`), which setup uses to reject a mistyped ID. With a wrong ID the station silently ignores commands.
+
 ---
 
 ## 📊 Entity Overview
@@ -268,6 +274,7 @@ Transform your VR setup with smart automations:
 
 ### Technical References
 - **[jeroen1602/lighthouse_pm](https://github.com/jeroen1602/lighthouse_pm)** (GPLv3) - BLE protocol reference, including the V1 (Vive) pairing/power command structure
+- **[ShayBox/Lighthouse](https://github.com/ShayBox/Lighthouse)** (MIT) - Reference for V1 power control that users confirmed working (write timing, matching a station to its pair ID by Bluetooth name)
 - **[Home Assistant Community](https://community.home-assistant.io)** - Testing, feedback, and feature requests
 
 ---

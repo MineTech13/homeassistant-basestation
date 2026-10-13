@@ -511,6 +511,40 @@ cancelled in either, and a waiter still present gets the exception from `task.re
 known 1b cooldown side effect; another restart at 10-12 02:50 caused none. Counters on all four are low (≤2 connection
 failures since that restart), `suspected_stranded_slots` 0. Stage 1b is still live, NSPanel still the main proxy.
 
+## V1 (HTC Vive) support — work in progress on its own branch
+
+Tracked in [#4](https://github.com/MineTech13/homeassistant-basestation/issues/4). Developed on a branch off `dev`
+that is kept merged up to date with `dev`. It goes into `dev` only after `dev` itself has been merged to `main`
+once the V2 long-term test is done, so **nothing on the V1 branch may change V2 behaviour**: V1 work stays in
+`ViveBasestationDevice`, the `pair_id` config step, and V1 strings. Shared code only gets opt-in parameters
+whose defaults keep the old behaviour (e.g. `BLEOperationWrite.settle_delay = 0.0`).
+
+Reference implementation: [ShayBox/Lighthouse](https://github.com/ShayBox/Lighthouse) (Rust, btleplug). A user in #4
+confirmed it switches V1 stations on Linux where other tools didn't. What it does, and how we compare:
+- **Command bytes are identical to ours.** Characteristic `0000cb01-…`, 20 bytes: `12 00 00 00` (on) /
+  `12 02 00 01` (off), then the BSID little-endian (`AABBCCDD` → `DD CC BB AA`), then zero padding. That is
+  `build_v1_command()`; our `struct.pack("<I", pair_id)` already produced this. So the encoding was never the
+  bug.
+- **It writes without response and then waits 1 s before disconnecting.** We wrote 3× with 1 s between
+  writes but disconnected right after the last one. A write without response is only queued locally when
+  `write_gatt_char()` returns, so the V1 write now sets `settle_delay=1.0`.
+- **It matches a station to a BSID by the last 4 characters of its name** (`HTC BS xxxxxx` ends in the
+  BSID's last 4 hex digits). We never checked this, and a station ignores a command with the wrong ID without
+  any error, so a typo looked like a working setup. The config flow now requires the full 8 digits (it used
+  to accept 1–8) and rejects an ID whose last 4 digits don't match the advertised name
+  (`v1_pair_id_matches_name()`). Existing entries get one WARNING from `update()` if they don't match, and
+  diagnostics show `pair_id_matches_name`.
+- It never reads anything from a V1 station; there is no readable state. Our info read still tries the
+  standard Device Information characteristics. Nobody has reported whether V1 has them; the info read now
+  records the station's GATT layout (`gatt_services` in diagnostics) and warns once if `0000cb01` is missing.
+
+**Unverified on hardware.** Nobody on the team owns a V1 station; testers from #4 have to confirm. Ask
+them for diagnostics after setup and after one on/off: `pair_id_matches_name`, `gatt_services` (does
+`0000cb01` list `write-without-response`? is there a `180a` Device Information service?), and whether
+the station actually changed state. "Everything unknown" in #4 is at least partly expected:
+firmware/model/hardware/manufacturer stay unknown if V1 has no Device Information service, and the switch
+state is only our own guess from the last command sent.
+
 ## Conventions
 
 - User-facing strings live in `translations/{en,de,es,fr,it,nl}.json` and must be kept in sync across all

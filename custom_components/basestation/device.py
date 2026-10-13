@@ -145,6 +145,37 @@ class BLEOperationWrite:
     without_response: bool = False
     repeat_count: int = 1
     repeat_delay: float = 1.0
+    # Time to stay connected after the last write before disconnecting. A write without response
+    # is only queued locally when write_gatt_char() returns; dropping the link straight away can
+    # discard it before it is sent over the air. 0 keeps the previous behavior.
+    settle_delay: float = 0.0
+
+
+def build_v1_command(command: V1Command, pair_id: int) -> bytes:
+    """
+    Build the 20-byte V1 power command for a station's pair ID (BSID).
+
+    Byte layout matches ShayBox/Lighthouse's v1_command(), which users report switches V1
+    stations reliably: the 4-byte command prefix, the BSID little-endian (so "AABBCCDD" is sent
+    as DD CC BB AA), then zero padding.
+    """
+    command_bytes = bytearray(20)
+    command_bytes[0:4] = command.value
+    command_bytes[4:8] = struct.pack("<I", pair_id)
+    return bytes(command_bytes)
+
+
+def v1_pair_id_matches_name(pair_id: int, name: str | None) -> bool | None:
+    """
+    Check a V1 pair ID against the station's advertised name.
+
+    A V1 station advertises as "HTC BS xxxxxx", ending in the last 4 hex digits of the BSID
+    printed on its back. ShayBox/Lighthouse matches stations to BSIDs this way. Returns None when
+    the name doesn't look like a V1 name, so there's nothing to check against.
+    """
+    if not name or not name.startswith(V1_NAME_PREFIX) or len(name) < len(V1_NAME_PREFIX) + 4:
+        return None
+    return name[-4:].upper() == f"{pair_id:08X}"[-4:]
 
 
 class BasestationDevice(ABC):
@@ -446,6 +477,8 @@ class BasestationDevice(ABC):
             )
             if i < op.repeat_count - 1:
                 await asyncio.sleep(op.repeat_delay)
+        if op.settle_delay:
+            await asyncio.sleep(op.settle_delay)
         return True
 
     async def _execute_single_ble_attempt(
@@ -1207,6 +1240,11 @@ class ViveBasestationDevice(BasestationDevice):
         self.pair_id = pair_id
         if pair_id is not None:
             self._info["pair_id"] = f"0x{pair_id:08X}"
+        self._pair_id_checked = False
+        # Services/characteristics seen on the last info read, for diagnostics. Nobody with V1
+        # hardware has reported this yet; it's what tells us whether V1 exposes the standard
+        # Device Information characteristics at all, and how its power characteristic is flagged.
+        self.gatt_services: list[dict[str, Any]] | None = None
 
     @property
     def default_name(self) -> str:
@@ -1231,46 +1269,65 @@ class ViveBasestationDevice(BasestationDevice):
         # swallowing a legitimate command whenever it's stale (e.g. right after a restart, before
         # restore_is_on() runs, or if the station was toggled by something other than this
         # integration). Sending an on/off command the station is already in is harmless.
-        if not self.pair_id:
-            return
-
-        try:
-            command = bytearray(20)
-            command[0:4] = V1Command.TURN_ON.value
-            command[4:8] = struct.pack("<I", int(self.pair_id))
-
-            if await self.async_ble_operation(
-                BLEOperationWrite(
-                    V1_PWR_CHARACTERISTIC, bytes(command), without_response=True, repeat_count=3, repeat_delay=1.0
-                )
-            ):
-                self._is_on = True
-        except (ValueError, struct.error):
-            _LOGGER.exception("Invalid pair_id format for V1 basestation %s", self.mac)
-        except Exception:
-            _LOGGER.exception("Unexpected error turning on V1 basestation")
+        if await self._send_power_command(V1Command.TURN_ON):
+            self._is_on = True
 
     async def turn_off(self) -> None:
         """Turn off the device."""
         # See turn_on() for why this doesn't early-return based on _is_on.
+        if await self._send_power_command(V1Command.TURN_OFF):
+            self._is_on = False
+
+    async def _send_power_command(self, command: V1Command) -> bool:
+        """
+        Write a V1 power command, returning True if every write went through.
+
+        A V1 station gives no acknowledgement: it silently ignores a command carrying the wrong
+        pair ID, and the write still "succeeds". So True only means the bytes were sent.
+        """
         if not self.pair_id:
-            return
+            _LOGGER.warning("Cannot send %s to V1 basestation %s: no pair ID configured", command.name, self.mac)
+            return False
 
         try:
-            command = bytearray(20)
-            command[0:4] = V1Command.TURN_OFF.value
-            command[4:8] = struct.pack("<I", int(self.pair_id))
-
-            if await self.async_ble_operation(
-                BLEOperationWrite(
-                    V1_PWR_CHARACTERISTIC, bytes(command), without_response=True, repeat_count=3, repeat_delay=1.0
-                )
-            ):
-                self._is_on = False
+            payload = build_v1_command(command, int(self.pair_id))
         except (ValueError, struct.error):
             _LOGGER.exception("Invalid pair_id format for V1 basestation %s", self.mac)
-        except Exception:
-            _LOGGER.exception("Unexpected error turning off V1 basestation")
+            return False
+
+        # Write without response, then stay connected for a second before disconnecting, as
+        # ShayBox/Lighthouse does - see BLEOperationWrite.settle_delay.
+        sent = await self.async_ble_operation(
+            BLEOperationWrite(
+                V1_PWR_CHARACTERISTIC,
+                payload,
+                without_response=True,
+                repeat_count=3,
+                repeat_delay=1.0,
+                settle_delay=1.0,
+            )
+        )
+        _LOGGER.debug("Sent %s to V1 basestation %s: %s", command.name, self.mac, "ok" if sent else "failed")
+        return sent
+
+    def _check_pair_id_against_name(self) -> None:
+        """Warn once if the configured pair ID can't belong to this station (see v1_pair_id_matches_name)."""
+        if self._pair_id_checked or not self.pair_id:
+            return
+        service_info = bluetooth.async_last_service_info(self.hass, self.mac, connectable=False)
+        if service_info is None:
+            return
+
+        self._pair_id_checked = True
+        if v1_pair_id_matches_name(self.pair_id, service_info.name) is False:
+            _LOGGER.warning(
+                "The pair ID configured for V1 basestation %s (ending %s) does not match its Bluetooth "
+                "name '%s', which ends in the last 4 characters of its real ID. The station will ignore "
+                "on/off commands. Remove and re-add it with the ID printed on its back",
+                self.mac,
+                f"{self.pair_id:08X}"[-4:],
+                service_info.name,
+            )
 
     async def update(self) -> None:
         """Update the device state."""
@@ -1287,6 +1344,8 @@ class ViveBasestationDevice(BasestationDevice):
                 self._set_available("no longer advertising to any Bluetooth adapter or proxy", available=False)
                 return
 
+            self._check_pair_id_against_name()
+
             if self._consecutive_failures >= UNAVAILABLE_AFTER_CONSECUTIVE_FAILURES:
                 if time.time() - self._last_failure_time < UNAVAILABLE_RETRY_COOLDOWN:
                     return
@@ -1298,12 +1357,43 @@ class ViveBasestationDevice(BasestationDevice):
             self._set_available("error while checking advertisement visibility", available=False)
 
     async def _read_specific_info(
-        self, _client: BleakClientWithServiceCache, info: dict[BaseStationDeviceInfoKey, Any]
+        self, client: BleakClientWithServiceCache, info: dict[BaseStationDeviceInfoKey, Any]
     ) -> bool:
+        self._record_gatt_services(client)
         if self.pair_id:
             info["pair_id"] = f"0x{self.pair_id:08X}"
             return True
         return False
+
+    def _record_gatt_services(self, client: BleakClientWithServiceCache) -> None:
+        """Keep the station's GATT layout for diagnostics, warning once if the power characteristic is missing."""
+        try:
+            services: list[dict[str, Any]] = [
+                {
+                    "uuid": service.uuid,
+                    "characteristics": [
+                        {"uuid": char.uuid, "properties": list(char.properties)} for char in service.characteristics
+                    ],
+                }
+                for service in client.services
+            ]
+        except Exception as err:
+            _LOGGER.debug("Could not list GATT services of V1 basestation %s: %s", self.mac, err)
+            return
+
+        first_capture = self.gatt_services is None
+        self.gatt_services = services
+        has_power_char = any(
+            char["uuid"].lower() == V1_PWR_CHARACTERISTIC for service in services for char in service["characteristics"]
+        )
+        if first_capture and not has_power_char:
+            _LOGGER.warning(
+                "V1 basestation %s does not expose the power characteristic %s; on/off commands cannot work. "
+                "Please attach this device's diagnostics to "
+                "https://github.com/MineTech13/homeassistant-basestation/issues/4",
+                self.mac,
+                V1_PWR_CHARACTERISTIC,
+            )
 
 
 def get_basestation_device(
