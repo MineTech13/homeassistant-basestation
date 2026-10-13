@@ -1,6 +1,6 @@
 [project]
 name = "basestation"
-version = "2.1.0-alpha.7"
+version = "2.1.0-alpha.7+v1test.1"
 license = { file = "LICENSE" }
 dependencies = [
     "bleak>=1.0.1",
