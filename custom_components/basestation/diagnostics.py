@@ -102,7 +102,8 @@ def _device_info(device: BasestationDevice) -> dict[str, Any]:
         "connection_timeout": device.connection_timeout,
         "info_scan_interval": device.info_scan_interval,
         "has_cached_info": device.has_cached_info,
-        "cached_info": dict(device.cached_info),
+        # cached_info carries the pair ID too (V2 reads it, V1 holds the configured one).
+        "cached_info": async_redact_data(dict(device.cached_info), TO_REDACT),
     }
 
     if isinstance(device, ValveBasestationDevice):
