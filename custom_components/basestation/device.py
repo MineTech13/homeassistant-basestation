@@ -101,7 +101,8 @@ PHANTOM_CONNECTION_MARKERS = ("Not connected",)
 
 # How many connect failures to charge a proxy with for one phantom connection (see
 # _penalise_connected_proxy). habluetooth scores a connection path as RSSI minus
-# 0.51 * rssi_diff * failures, so two flips the choice whatever the RSSI gap between two proxies.
+# 0.51 * rssi_diff * failures, so two flips the choice between two proxies only while the other one
+# carries no penalty of its own (connects in progress, its own failures, last free slot).
 PHANTOM_CONNECTION_PENALTY = 2
 
 type BaseStationDeviceInfoKey = Literal["firmware", "model", "hardware", "manufacturer", "channel", "pair_id"]
@@ -486,6 +487,7 @@ class BasestationDevice(ABC):
     ) -> bool | bytearray | None:
         """Execute a single BLE connection and operation attempt. Returns None on failure."""
         client = None
+        connected_path: tuple[Any, str] = (None, self.mac)
         result: bool | bytearray | None = None
 
         try:
@@ -496,6 +498,7 @@ class BasestationDevice(ABC):
                 return None
 
             client = await asyncio.wait_for(self._await_connection(device), timeout=self.connection_timeout)
+            connected_path = self._connected_path(client)
 
             async with client:
                 self._current_client = client
@@ -509,7 +512,7 @@ class BasestationDevice(ABC):
 
         except Exception as err:
             self._record_connect_exception(err, "contacting")
-            self._react_to_attempt_failure(err, client)
+            self._react_to_attempt_failure(err, client, connected_path)
         else:
             return result
         finally:
@@ -867,18 +870,21 @@ class BasestationDevice(ABC):
             self.connection_log.record_exception(Phase.OPERATION, Outcome.ERROR, err, context=context)
             _LOGGER.exception("Unexpected error %s %s", context, self.mac)
 
-    def _react_to_attempt_failure(self, err: Exception, client: BleakClientWithServiceCache | None) -> None:
+    def _react_to_attempt_failure(
+        self, err: Exception, client: BleakClientWithServiceCache | None, connected_path: tuple[Any, str]
+    ) -> None:
         """
         Act on the two failure shapes that leave a proxy in a state the next attempt makes worse.
 
         `client` is None when the connect itself failed, and set when it connected but the
-        operation on it then failed.
+        operation on it then failed. `connected_path` is what _connected_path() captured right
+        after that connect.
         """
         if client is None:
             if _is_connect_timeout_error(err):
                 self._start_connect_cooldown()
         elif _is_phantom_connection_error(err):
-            self._penalise_connected_proxy(client)
+            self._penalise_connected_proxy(*connected_path)
 
     def _start_connect_cooldown(self) -> None:
         self._connect_cooldown_until = time.monotonic() + CONNECT_TIMEOUT_COOLDOWN
@@ -901,7 +907,22 @@ class BasestationDevice(ABC):
         _LOGGER.debug("Skipping %s for %s, %.0fs of connect cooldown left", what, self.mac, remaining)
         return True
 
-    def _penalise_connected_proxy(self, client: BleakClientWithServiceCache) -> None:
+    def _connected_path(self, client: BleakClientWithServiceCache) -> tuple[Any, str]:
+        """
+        Return the proxy (habluetooth scanner) a fresh connection went through, and the address it used.
+
+        This has to be captured straight after the connect, while the link is still up: from
+        habluetooth 7 on (Home Assistant 2026.10+), HaBleakClientWrapper.disconnect() clears
+        _connected_scanner/_connected_device, and `async with client` has already disconnected
+        by the time a failed operation reaches an except block. Reading them there instead is
+        what made the phantom-connection penalty a silent no-op on 2026.10. Private habluetooth
+        internals, hence getattr; the scanner is None if they are missing.
+        """
+        scanner = getattr(client, "_connected_scanner", None)
+        connected_device = getattr(client, "_connected_device", None)
+        return scanner, getattr(connected_device, "address", None) or self.mac
+
+    def _penalise_connected_proxy(self, scanner: Any, address: str) -> None:
         """
         Make Home Assistant route this station's next connects through a different proxy.
 
@@ -919,24 +940,22 @@ class BasestationDevice(ABC):
         `cdef public dict` and so stays reachable in both the compiled and pure-Python builds.
         These are still private habluetooth internals, so every lookup tolerates them being gone;
         that is logged as a warning once, because a penalty that quietly does nothing is exactly
-        how the first version went unnoticed. The penalty lasts until that proxy next connects to
-        this station successfully.
+        how the first version went unnoticed (and, under habluetooth 7, how the second one did: see
+        _connected_path). The penalty lasts until that proxy next connects to this station
+        successfully.
         """
-        scanner = getattr(client, "_connected_scanner", None)
         connect_failures = getattr(scanner, "_connect_failures", None)
         if not isinstance(connect_failures, dict):
-            log = _LOGGER.warning if not self._penalty_unsupported_warned else _LOGGER.debug
-            log(
-                "Cannot steer basestation %s away from a Bluetooth proxy that faked a connection: "
-                "habluetooth's internals are not what this integration expects (scanner: %s)",
-                self.mac,
-                type(scanner).__name__,
+            reason = (
+                "no proxy was recorded for the connection"
+                if scanner is None
+                else f"habluetooth's internals are not what this integration expects ({type(scanner).__name__})"
             )
+            log = _LOGGER.warning if not self._penalty_unsupported_warned else _LOGGER.debug
+            log("Cannot steer basestation %s away from a Bluetooth proxy that faked a connection: %s", self.mac, reason)
             self._penalty_unsupported_warned = True
             return
 
-        connected_device = getattr(client, "_connected_device", None)
-        address = getattr(connected_device, "address", None) or self.mac
         connect_failures[address] = connect_failures.get(address, 0) + PHANTOM_CONNECTION_PENALTY
 
         proxy_name = getattr(scanner, "name", "unknown proxy")
@@ -990,11 +1009,13 @@ class BasestationDevice(ABC):
 
         info: dict[BaseStationDeviceInfoKey, str] = {}
         client = None
+        connected_path: tuple[Any, str] = (None, self.mac)
         std_success = False
         spec_success = False
 
         try:
             client = await asyncio.wait_for(self._await_connection(device), timeout=self.connection_timeout)
+            connected_path = self._connected_path(client)
 
             async with client:
                 self._current_client = client
@@ -1008,7 +1029,7 @@ class BasestationDevice(ABC):
 
         except Exception as err:
             self._record_connect_exception(err, "reading device info for")
-            self._react_to_attempt_failure(err, client)
+            self._react_to_attempt_failure(err, client, connected_path)
         else:
             if std_success or spec_success:
                 return info

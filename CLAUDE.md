@@ -450,6 +450,10 @@ the "one more failure under 1b" the seventh incident was waiting for. It happene
 looked at until 2026-10-11, so nothing was collected live: no diagnostics from the time, and HA's own log for that day is
 gone (see the logging notes below). Reconstructed afterwards from the proxy logbook and the recorder.
 
+**Proxy placement (from the user, matches RSSI):** `nspanel` is in the room with the stations, `ble-tracker` is far away.
+RSSI nspanel / ble-tracker: Tür -63/-95, Bett -74/-97, Couch -77/-92, PC -85/-97. So "steer away from nspanel" means
+"steer onto a link at the edge of range". Keep this in mind for any penalty tuning.
+
 - **`pc_ecke` (DD:28): phantom link on `nspanel`.** `Connecting v3` to DD:28 on `nspanel` slot `[0]` at 04:23:43.5, then
   `[E] [0] OPEN_EVT in unexpected state` + `status=133` at 04:24:03.6, i.e. 20.1s later (bleak_esphome's timeout again). After
   that **no proxy attempted DD:28 again** until the restart, consistent with it no longer advertising (`seen_by` was not
@@ -506,15 +510,96 @@ That also never cancels the task, but it doesn't register the logging callback. 
 Python 3.14.6 and 3.13: `shield` logs `… exception in shielded future`, `wait` logs nothing, the task is never
 cancelled in either, and a waiter still present gets the exception from `task.result()`.
 
+**Check-in 2026-10-10 ~02:57 local (before a user-requested HA restart): clean.** Covers 31.5h since the 10-08 19:22 HA
+restart, still stage 1b.
+- Each station ~1,930 connects, all succeeded. `became_unavailable`, `proxy_penalised`, `suspected_stranded_slots`,
+  `out_of_slots`, `lock_timeout` all 0. The only failure is Bett Ecke's post-restart connect timeout (cooldown handled it).
+  All four seen by both proxies. Switch history shows only user on/off, never `unavailable`.
+- Proxy logbook: no `[E]` lines at all (no `OPEN_EVT in unexpected state`, no teardown loop). ble-tracker uptime unbroken,
+  heap ~93 KB. No basestation errors in the HA log.
+- New, minor: nspanel logged `[W] … Connected reply deferred, TCP buffer full` 3× (10-09 17:32, 17:41, 23:42), once
+  for each of different stations. That is its API send buffer to HA filling briefly during a connect. Harmless alone,
+  another sign of NSPanel load.
+- **Tooling gotcha:** `ha_get_logs(source="logbook", hours_back=N)` returns at most ~24h even for larger N. A 32h search
+  silently ended at 10-09 18:56 and looked like the proxy MQTT logging had stopped; it hadn't (the forwarding automation is
+  `automation.ble_proxy_logs_ins_logbuch`, not the name given in the third incident). Read longer windows in ≤24h chunks
+  via `end_time`.
+- Stable since 2026-10-06 06:51. The plan is unchanged: weekend on 1b, then stage 2.
+
 **Follow-up check, 2026-10-12 ~19:15:** no failure since the eighth incident. No teardown loop and no new `OPEN_EVT` after
 10-11 15:51. The only unavailable blip (PC + Couch, 10-11 20:42–20:46) followed an HA restart at 20:42:19, which is the
 known 1b cooldown side effect; another restart at 10-12 02:50 caused none. Counters on all four are low (≤2 connection
 failures since that restart), `suspected_stranded_slots` 0. Stage 1b is still live, NSPanel still the main proxy.
 
+### Ninth incident (2026-10-13/14): alpha.7 on HA 2026.10, and the proxy penalty had been dead since the HA update
+
+Same setup, now on the public **`2.1.0-alpha.7`** (installed with the HA restart at 10-12 19:30), HA **2026.10.1**, NSPanel still
+the main proxy (functionally stage 1b). Two episodes with the usual pairing, both starting with a Couch Ecke (F8:…:F6:2F)
+connect on `nspanel` slot `[0]` and an `OPEN_EVT in unexpected state` / `status=133` exactly 20s later:
+
+- **10-13 18:31:19.7 → 18:31:39.7.** Couch went unavailable 18:35 (phantom link). Bett Ecke (C4:C1) went into the "Not
+  connected" mode on nspanel (`Timeout waiting for teardown` loop) and flapped until 20:55. The user restarted both proxies
+  at 10-14 00:23:05, together with an HA restart; all four were back by 00:23:29.
+- **10-14 08:30:33.6 → 08:30:53.7.** Couch unavailable from 08:36 with `seen_by: []`. PC Ecke (DD:28) went into the "Not
+  connected" mode from 08:31:53: 640 `GATT Error … Not connected`, 39 unavailable flips by 17:13. Tür and Bett stayed fine.
+  Evidence was pulled live via the HA MCP before any restart.
+- `suspected_stranded_slots` 0, `out_of_slots` 0 on all four again.
+
+**The penalty never fired (`proxy_penalised` 0), and the HA log said why:** `Cannot steer basestation DD:28… away from a
+Bluetooth proxy that faked a connection: habluetooth's internals are not what this integration expects (scanner:
+NoneType)`. Cause: HA 2026.10.0 moved to **habluetooth 7.1.2**, whose `HaBleakClientWrapper.disconnect()` calls `_untrack()`
+and clears `_connected_scanner` / `_connected_device`. In `_execute_single_ble_attempt` / `_attempt_device_info_read`,
+`async with client` has already disconnected when the failed read reaches the `except` block, so the penalty always found
+no scanner. In 6.x nothing cleared those attributes, which is why it partly worked in the eighth incident.
+
+| HA | habluetooth | penalty |
+|---|---|---|
+| 2026.9.x (until 10-08) | 6.26.11 | fired (eighth incident) |
+| 2026.10.0 / 2026.10.1 (from 10-08 19:22) | 7.1.2 | silent no-op |
+
+So it broke with the HA update, not with alpha.7 (alpha.7's only code change was shield → `asyncio.wait`). The 10-08 → 10-12
+"stable" stretch on `dd27c4e` had no `OPEN_EVT` at all, so the penalty was never exercised there. The dev box still has
+habluetooth 6.1.0, which is how the seventh-incident fix was "verified" against the wrong version.
+
+**Fix (`dev`, unreleased at time of writing):** `_connected_path()` snapshots the scanner and address straight after the
+connect, and `_penalise_connected_proxy(scanner, address)` uses that. Verified against the compiled habluetooth 7.1.2 in a
+scratch venv, with the real `device.py`, HA stubbed out: a `Not connected` raised inside `async with client` charges nspanel
+with 2 failures (`proxy_penalised` 1). With today's RSSI (nspanel -86, ble-tracker -93) the path score goes -86 / -93 →
+-93.14 / -93.0, so ble-tracker wins, **but only by 0.14**. Any connect in progress on ble-tracker flips it back (see the eighth
+incident). `PHANTOM_CONNECTION_PENALTY` was left at 2 on purpose until `proxy_penalised` shows real numbers.
+
+**Side finding, not causal:** `ble-tracker` dropped its API connection to HA every 1–10 min from 10-14 01:17 to 04:09 local.
+Its `uptime` kept counting through it and the reset reason stayed `Reboot request from api`, so it did not reboot. It had been
+OTA-flashed three times on 10-13 18:39–18:44. Not investigated further.
+
+**Restart result:** restarting **only `nspanel`** (10-14 17:22:42 local, `ble-tracker` untouched) cured both. Last teardown
+line 17:22:41, nspanel back up 17:22:54, Couch back at 17:23:16 (first connect via nspanel 17:23:13), PC Ecke back at
+17:23:42, no `[E]` lines afterwards. So nspanel held Couch's phantom link: **four out of four phantom links that could be
+attributed (sixth, seventh, eighth, ninth) sit on nspanel**, and each time the "Not connected" mode on the second station
+went away with the same restart. alpha.8 (the penalty fix) was not installed yet at this point.
+
+**Plan agreed 2026-10-14: test-plan stage 1c** = `2.1.0-alpha.8` (released 10-14, the first build where the penalty works on
+HA 2026.10), NSPanel still the main proxy. Wait for the next nspanel episode before stage 2. **Live since 2026-10-14 ~17:28
+local** (alpha.8 installed + HA restart; all four available within ~30s, no basestation warnings). Confirm
+`integration_manifest.version` in the diagnostics says `2.1.0-alpha.8` before reading any incident as 1c.
+What to check on the next "Not connected" episode:
+- `proxy_penalised` > 0 on the affected station, one `… reported a connection … that was not really there` WARNING naming
+  nspanel, and **no** `Cannot steer` WARNING (if that comes back, the snapshot in `_connected_path` is broken again).
+- In the proxy logbook, that station's `Connecting v3` lines moving to `ble-tracker`, and how long they stay there before
+  HA routes back to nspanel (the 0.14-point margin, see above). If they keep bouncing back, the penalty size is the next
+  thing to tune.
+- The phantom link itself (the station that vanishes with `seen_by: []`) is not expected to change: it still needs an nspanel
+  restart. That is what stage 2 is for.
+
 ## V1 (HTC Vive) support — work in progress on its own branch
 
-Tracked in [#4](https://github.com/MineTech13/homeassistant-basestation/issues/4). Developed on a branch off `dev`
-that is kept merged up to date with `dev`. It goes into `dev` only after `dev` itself has been merged to `main`
+Tracked in [#4](https://github.com/MineTech13/homeassistant-basestation/issues/4). Developed on the `v1-test` branch,
+with no open PR (the first one, #17, was closed on 2026-10-14 and its branch deleted). `v1-test` is brought up to date
+by **merging `dev` into it, never rebasing**: published `…-v1test.N` tags must stay in the branch history, and a rebase
+would need a force push each time. Expect conflicts in `CLAUDE.md`, `manifest.json` and `pyproject.toml` on every sync
+(take `dev`'s version, the `+v1test.N` bump comes with the next V1 build); `git config rerere.enabled true` helps. The
+final move into `dev` is a **squash merge**, so the sync merges and the `+v1test.N` bumps never land on `dev`. That
+happens only after `dev` itself has been merged to `main`
 once the V2 long-term test is done, so **nothing on the V1 branch may change V2 behaviour**: V1 work stays in
 `ViveBasestationDevice`, the `pair_id` config step, and V1 strings. Shared code only gets opt-in parameters
 whose defaults keep the old behaviour (e.g. `BLEOperationWrite.settle_delay = 0.0`).
@@ -557,6 +642,11 @@ state is only our own guess from the last command sent.
   `BleakOutOfConnectionSlotsError`) even though they're not in that library's `__all__` — there's precedent
   for this in the codebase, just be aware such imports aren't guaranteed stable across `bleak-retry-connector`
   version bumps.
+- Code that touches private habluetooth internals (`_connected_scanner`, `_connect_failures`, …) must be checked against
+  **the habluetooth version the user's HA actually ships** (`homeassistant/components/bluetooth/manifest.json` at that HA
+  tag), using the compiled wheel. The dev box's `homeassistant` pin lags behind and has twice hidden a silent no-op (seventh
+  and ninth incidents). A scratch venv with just `habluetooth==<pin>` is enough; the wrapper is plain Python and the scanner
+  is Cython.
 
 ## Releasing
 
@@ -568,11 +658,13 @@ state is only our own guess from the last command sent.
   `vX.Y.Z-alpha.00N` spelling.
 - Order: lint gate (`ruff format --check . && ruff check . && mypy custom_components/basestation`) → bump
   commit → push `dev` → tag → `gh release create <tag> --prerelease --target dev`.
-- **V1 test builds** (for #4) are cut from the V1 branch, not `dev`: version `<dev version>+v1test.N` (e.g.
-  `2.1.0-alpha.7+v1test.1`), tag `vX.Y.Z-alpha.00N-v1test.00M`. Build metadata rather than a fourth pre-release
-  segment because `pyproject.toml` must be PEP 440: ruff's RUF200 rejects `2.1.0-alpha.7.v1test.1`, while
-  `+v1test.1` is valid PEP 440 and valid SemVer for hassfest. Release notes must say the V1 PR stays open
-  for at least one to two months and that later `dev` pre-releases don't contain the V1 changes.
+- **V1 test builds** (for #4) are cut from `v1-test`, not `dev` (`--target v1-test`): version
+  `<dev version>+v1test.N` (e.g. `2.1.0-alpha.7+v1test.1`), tag `vX.Y.Z-alpha.00N-v1test.00M`. N counts up across
+  all V1 builds and does not restart when the dev base changes, so testers can name a build by it. Build metadata
+  rather than a fourth pre-release segment because `pyproject.toml` must be PEP 440: ruff's RUF200 rejects
+  `2.1.0-alpha.7.v1test.1`, while `+v1test.1` is valid PEP 440 and valid SemVer for hassfest. Release notes must say
+  the V1 work stays on its branch for at least one to two months and that later `dev` pre-releases don't contain
+  the V1 changes.
 - Pre-releases are cut from `dev`. Exception: `v2.1.0-alpha.004` was tagged on the since-deleted `alt-test`
   branch (keep-alive connection reuse + verified-command loop, never merged) — it is not an ancestor of
   `alpha.005` or later, so compare links should go from `alpha.003`.
