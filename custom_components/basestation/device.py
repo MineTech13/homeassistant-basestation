@@ -1262,6 +1262,7 @@ class ViveBasestationDevice(BasestationDevice):
         if pair_id is not None:
             self._info["pair_id"] = f"0x{pair_id:08X}"
         self._pair_id_checked = False
+        self._passive_only_warned = False
         # Services/characteristics seen on the last info read, for diagnostics. Nobody with V1
         # hardware has reported this yet; it's what tells us whether V1 exposes the standard
         # Device Information characteristics at all, and how its power characteristic is flagged.
@@ -1350,6 +1351,34 @@ class ViveBasestationDevice(BasestationDevice):
                 service_info.name,
             )
 
+    def _warn_if_only_passively_seen(self) -> None:
+        """
+        Warn once if the station is only heard by scanners that can't connect to it.
+
+        get_ble_device() only returns a device behind a connectable adapter or proxy. A station
+        heard only by passive scanners (an ESPHome proxy without `active: true`, a Shelly gateway,
+        ...) still shows up in HA's Bluetooth pages, so it looks reachable while no command can
+        ever reach it. _set_available() logs nothing here either: the entry starts out
+        unavailable, so there is no transition. A tester in #4 hit exactly this with no log output.
+        """
+        if self._passive_only_warned:
+            return
+        passive_scanners = [
+            scanner_device.scanner.name
+            for scanner_device in bluetooth.async_scanner_devices_by_address(self.hass, self.mac, connectable=False)
+        ]
+        if not passive_scanners:
+            return
+
+        self._passive_only_warned = True
+        _LOGGER.warning(
+            "V1 basestation %s is only seen by Bluetooth scanners that cannot connect to it (%s), so it "
+            "cannot be switched. It needs a connectable Bluetooth adapter or an ESPHome Bluetooth proxy "
+            "with `active: true` in range",
+            self.mac,
+            ", ".join(passive_scanners),
+        )
+
     async def update(self) -> None:
         """Update the device state."""
         # V1 has no readable state characteristic, so advertisement visibility is the only signal
@@ -1360,12 +1389,13 @@ class ViveBasestationDevice(BasestationDevice):
         # user to happen to send a command that succeeds - otherwise a station that came back into
         # range would stay marked unavailable indefinitely.
         try:
+            self._check_pair_id_against_name()
+
             ble_device = self.get_ble_device()
             if ble_device is None:
+                self._warn_if_only_passively_seen()
                 self._set_available("no longer advertising to any Bluetooth adapter or proxy", available=False)
                 return
-
-            self._check_pair_id_against_name()
 
             if self._consecutive_failures >= UNAVAILABLE_AFTER_CONSECUTIVE_FAILURES:
                 if time.time() - self._last_failure_time < UNAVAILABLE_RETRY_COOLDOWN:

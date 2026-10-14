@@ -57,6 +57,7 @@ def _bluetooth_info(hass: HomeAssistant, mac: str) -> dict[str, Any]:
     """
     info: dict[str, Any] = {
         "connectable_scanner_count": bluetooth.async_scanner_count(hass, connectable=True),
+        "scanner_count_total": bluetooth.async_scanner_count(hass, connectable=False),
         "seen_by": [],
     }
 
@@ -82,6 +83,18 @@ def _bluetooth_info(hass: HomeAssistant, mac: str) -> dict[str, Any]:
                 "rssi": scanner_device.advertisement.rssi if scanner_device.advertisement else None,
             }
         )
+
+    # Every scanner hearing the station, passive ones included. Empty seen_by with a non-empty
+    # seen_by_any means HA can hear the station but has nothing that can connect to it (#4).
+    info["seen_by_any"] = [
+        {
+            "source": scanner_device.scanner.source,
+            "name": scanner_device.scanner.name,
+            "connectable": scanner_device.scanner.connectable,
+            "rssi": scanner_device.advertisement.rssi if scanner_device.advertisement else None,
+        }
+        for scanner_device in bluetooth.async_scanner_devices_by_address(hass, mac, connectable=False)
+    ]
 
     return info
 

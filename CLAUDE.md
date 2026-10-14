@@ -630,6 +630,15 @@ the station actually changed state. "Everything unknown" in #4 is at least partl
 firmware/model/hardware/manufacturer stay unknown if V1 has no Device Information service, and the switch
 state is only our own guess from the last command sent.
 
+**First tester report (supertin, `2.1.0-alpha.7+v1test.1`, 2026-10-14):** both stations unavailable, no log output.
+Diagnostics: `connectable_scanner_count` 0, `seen_by` [] but `pair_id_matches_name` true (that check uses
+`connectable=False`), `connect_started` 0, `gatt_services` null. So HA heard the stations only through passive
+scanners and the integration never tried to connect; the V1 protocol changes were never exercised, and the ID
+check passed. It was silent because `_available` starts `False`, so `_set_available(False)` is no transition and
+logs nothing. Response on `v1-test`: `_warn_if_only_passively_seen()` (one WARNING naming the passive scanners),
+`scanner_count_total` / `seen_by_any` in diagnostics, README note. The same report exposed that `cached_info` in
+diagnostics wasn't redacted, so both testers' pair IDs are public in #4 (fixed on `dev`, `105592c`).
+
 ## Conventions
 
 - User-facing strings live in `translations/{en,de,es,fr,it,nl}.json` and must be kept in sync across all

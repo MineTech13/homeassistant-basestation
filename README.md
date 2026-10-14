@@ -115,6 +115,11 @@ V1 base stations need their **pair ID** to accept on/off commands: the 8-charact
 station (sometimes called BSID), e.g. `1A2B3C4D`. Its last 4 characters also end the station's Bluetooth name
 (`HTC BS …`), which setup uses to reject a mistyped ID. With a wrong ID the station silently ignores commands.
 
+The station also needs a Bluetooth adapter or proxy in range that can **connect** to it: a local adapter or
+an ESPHome Bluetooth proxy with `active: true`. Passive scanners (e.g. Shelly gateways, ESPHome proxies without
+`active: true`) still list the station in Home Assistant's Bluetooth pages, but can't send it anything. In that case
+the switch stays unavailable and the log shows a warning naming the scanners that see it.
+
 ---
 
 ## 📊 Entity Overview
