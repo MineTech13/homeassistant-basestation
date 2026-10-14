@@ -531,6 +531,49 @@ restart, still stage 1b.
 known 1b cooldown side effect; another restart at 10-12 02:50 caused none. Counters on all four are low (≤2 connection
 failures since that restart), `suspected_stranded_slots` 0. Stage 1b is still live, NSPanel still the main proxy.
 
+### Ninth incident (2026-10-13/14): alpha.7 on HA 2026.10, and the proxy penalty had been dead since the HA update
+
+Same setup, now on the public **`2.1.0-alpha.7`** (installed with the HA restart at 10-12 19:30), HA **2026.10.1**, NSPanel still
+the main proxy (functionally stage 1b). Two episodes with the usual pairing, both starting with a Couch Ecke (F8:…:F6:2F)
+connect on `nspanel` slot `[0]` and an `OPEN_EVT in unexpected state` / `status=133` exactly 20s later:
+
+- **10-13 18:31:19.7 → 18:31:39.7.** Couch went unavailable 18:35 (phantom link). Bett Ecke (C4:C1) went into the "Not
+  connected" mode on nspanel (`Timeout waiting for teardown` loop) and flapped until 20:55. The user restarted both proxies
+  at 10-14 00:23:05, together with an HA restart; all four were back by 00:23:29.
+- **10-14 08:30:33.6 → 08:30:53.7.** Couch unavailable from 08:36 with `seen_by: []`. PC Ecke (DD:28) went into the "Not
+  connected" mode from 08:31:53: 640 `GATT Error … Not connected`, 39 unavailable flips by 17:13. Tür and Bett stayed fine.
+  Evidence was pulled live via the HA MCP before any restart.
+- `suspected_stranded_slots` 0, `out_of_slots` 0 on all four again.
+
+**The penalty never fired (`proxy_penalised` 0), and the HA log said why:** `Cannot steer basestation DD:28… away from a
+Bluetooth proxy that faked a connection: habluetooth's internals are not what this integration expects (scanner:
+NoneType)`. Cause: HA 2026.10.0 moved to **habluetooth 7.1.2**, whose `HaBleakClientWrapper.disconnect()` calls `_untrack()`
+and clears `_connected_scanner` / `_connected_device`. In `_execute_single_ble_attempt` / `_attempt_device_info_read`,
+`async with client` has already disconnected when the failed read reaches the `except` block, so the penalty always found
+no scanner. In 6.x nothing cleared those attributes, which is why it partly worked in the eighth incident.
+
+| HA | habluetooth | penalty |
+|---|---|---|
+| 2026.9.x (until 10-08) | 6.26.11 | fired (eighth incident) |
+| 2026.10.0 / 2026.10.1 (from 10-08 19:22) | 7.1.2 | silent no-op |
+
+So it broke with the HA update, not with alpha.7 (alpha.7's only code change was shield → `asyncio.wait`). The 10-08 → 10-12
+"stable" stretch on `dd27c4e` had no `OPEN_EVT` at all, so the penalty was never exercised there. The dev box still has
+habluetooth 6.1.0, which is how the seventh-incident fix was "verified" against the wrong version.
+
+**Fix (`dev`, unreleased at time of writing):** `_connected_path()` snapshots the scanner and address straight after the
+connect, and `_penalise_connected_proxy(scanner, address)` uses that. Verified against the compiled habluetooth 7.1.2 in a
+scratch venv, with the real `device.py`, HA stubbed out: a `Not connected` raised inside `async with client` charges nspanel
+with 2 failures (`proxy_penalised` 1). With today's RSSI (nspanel -86, ble-tracker -93) the path score goes -86 / -93 →
+-93.14 / -93.0, so ble-tracker wins, **but only by 0.14**. Any connect in progress on ble-tracker flips it back (see the eighth
+incident). `PHANTOM_CONNECTION_PENALTY` was left at 2 on purpose until `proxy_penalised` shows real numbers.
+
+**Side finding, not causal:** `ble-tracker` dropped its API connection to HA every 1–10 min from 10-14 01:17 to 04:09 local.
+Its `uptime` kept counting through it and the reset reason stayed `Reboot request from api`, so it did not reboot. It had been
+OTA-flashed three times on 10-13 18:39–18:44. Not investigated further.
+
+**Restart result:** pending at time of writing (to be filled in). Per the runbook, restart **only nspanel** first.
+
 ## Conventions
 
 - User-facing strings live in `translations/{en,de,es,fr,it,nl}.json` and must be kept in sync across all
@@ -543,6 +586,11 @@ failures since that restart), `suspected_stranded_slots` 0. Stage 1b is still li
   `BleakOutOfConnectionSlotsError`) even though they're not in that library's `__all__` — there's precedent
   for this in the codebase, just be aware such imports aren't guaranteed stable across `bleak-retry-connector`
   version bumps.
+- Code that touches private habluetooth internals (`_connected_scanner`, `_connect_failures`, …) must be checked against
+  **the habluetooth version the user's HA actually ships** (`homeassistant/components/bluetooth/manifest.json` at that HA
+  tag), using the compiled wheel. The dev box's `homeassistant` pin lags behind and has twice hidden a silent no-op (seventh
+  and ninth incidents). A scratch venv with just `habluetooth==<pin>` is enough; the wrapper is plain Python and the scanner
+  is Cython.
 
 ## Releasing
 
