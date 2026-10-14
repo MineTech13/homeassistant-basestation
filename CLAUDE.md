@@ -572,7 +572,11 @@ incident). `PHANTOM_CONNECTION_PENALTY` was left at 2 on purpose until `proxy_pe
 Its `uptime` kept counting through it and the reset reason stayed `Reboot request from api`, so it did not reboot. It had been
 OTA-flashed three times on 10-13 18:39–18:44. Not investigated further.
 
-**Restart result:** pending at time of writing (to be filled in). Per the runbook, restart **only nspanel** first.
+**Restart result:** restarting **only `nspanel`** (10-14 17:22:42 local, `ble-tracker` untouched) cured both. Last teardown
+line 17:22:41, nspanel back up 17:22:54, Couch back at 17:23:16 (first connect via nspanel 17:23:13), PC Ecke back at
+17:23:42, no `[E]` lines afterwards. So nspanel held Couch's phantom link: **four out of four phantom links that could be
+attributed (sixth, seventh, eighth, ninth) sit on nspanel**, and each time the "Not connected" mode on the second station
+went away with the same restart. alpha.8 (the penalty fix) was not installed yet at this point.
 
 ## Conventions
 
