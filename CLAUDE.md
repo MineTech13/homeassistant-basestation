@@ -578,6 +578,18 @@ line 17:22:41, nspanel back up 17:22:54, Couch back at 17:23:16 (first connect v
 attributed (sixth, seventh, eighth, ninth) sit on nspanel**, and each time the "Not connected" mode on the second station
 went away with the same restart. alpha.8 (the penalty fix) was not installed yet at this point.
 
+**Plan agreed 2026-10-14: test-plan stage 1c** = `2.1.0-alpha.8` (released 10-14, the first build where the penalty works on
+HA 2026.10), NSPanel still the main proxy. Wait for the next nspanel episode before stage 2. Still on alpha.7 when this was
+written; confirm `integration_manifest.version` in the diagnostics says `2.1.0-alpha.8` before reading any incident as 1c.
+What to check on the next "Not connected" episode:
+- `proxy_penalised` > 0 on the affected station, one `… reported a connection … that was not really there` WARNING naming
+  nspanel, and **no** `Cannot steer` WARNING (if that comes back, the snapshot in `_connected_path` is broken again).
+- In the proxy logbook, that station's `Connecting v3` lines moving to `ble-tracker`, and how long they stay there before
+  HA routes back to nspanel (the 0.14-point margin, see above). If they keep bouncing back, the penalty size is the next
+  thing to tune.
+- The phantom link itself (the station that vanishes with `seen_by: []`) is not expected to change: it still needs an nspanel
+  restart. That is what stage 2 is for.
+
 ## Conventions
 
 - User-facing strings live in `translations/{en,de,es,fr,it,nl}.json` and must be kept in sync across all
