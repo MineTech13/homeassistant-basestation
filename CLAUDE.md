@@ -579,8 +579,9 @@ attributed (sixth, seventh, eighth, ninth) sit on nspanel**, and each time the "
 went away with the same restart. alpha.8 (the penalty fix) was not installed yet at this point.
 
 **Plan agreed 2026-10-14: test-plan stage 1c** = `2.1.0-alpha.8` (released 10-14, the first build where the penalty works on
-HA 2026.10), NSPanel still the main proxy. Wait for the next nspanel episode before stage 2. Still on alpha.7 when this was
-written; confirm `integration_manifest.version` in the diagnostics says `2.1.0-alpha.8` before reading any incident as 1c.
+HA 2026.10), NSPanel still the main proxy. Wait for the next nspanel episode before stage 2. **Live since 2026-10-14 ~17:28
+local** (alpha.8 installed + HA restart; all four available within ~30s, no basestation warnings). Confirm
+`integration_manifest.version` in the diagnostics says `2.1.0-alpha.8` before reading any incident as 1c.
 What to check on the next "Not connected" episode:
 - `proxy_penalised` > 0 on the affected station, one `… reported a connection … that was not really there` WARNING naming
   nspanel, and **no** `Cannot steer` WARNING (if that comes back, the snapshot in `_connected_path` is broken again).
