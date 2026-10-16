@@ -958,7 +958,8 @@ class BasestationDevice(ABC):
         ):
             try:
                 if _value := await client.read_gatt_char(characteristic):
-                    info[key] = _value.decode("utf-8").strip()
+                    # V1 pads its model string with NUL bytes ("2.11\0\0\0\0"), which strip() keeps.
+                    info[key] = _value.decode("utf-8").replace("\x00", "").strip()
                     any_read_successful = True
             except BleakError as err:
                 _LOGGER.debug("BLE error reading characteristic %s: %s", key, err)
