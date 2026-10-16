@@ -591,6 +591,48 @@ What to check on the next "Not connected" episode:
 - The phantom link itself (the station that vanishes with `seen_by: []`) is not expected to change: it still needs an nspanel
   restart. That is what stage 2 is for.
 
+### Tenth incident (2026-10-15/16): the stage-1c episode, steering worked, nspanel then stopped connecting at all
+
+Same setup, **stage 1c live** (`2.1.0-alpha.8` confirmed in the diagnostics, HA 2026.10.1). Evidence pulled 2026-10-16 ~19:20
+local, before a planned HA restart, from diagnostics, the HA log and the proxy logbook.
+
+- **Usual pairing, 10-15.** PC Ecke (DD:28) `Connecting v3` on `nspanel` slot `[0]` at 03:40:48 → `OPEN_EVT in unexpected
+  state` / `status=133` at 03:41:08 (20s). That is the **fifth phantom link that can be attributed, all on nspanel**. PC Ecke
+  unavailable 03:49:28 (`no longer advertising`, seen by none) → 10:05:49. Tür Ecke (F5:55) connected via nspanel at 03:41:09,
+  and nspanel logged a teardown timeout 10s later ("Not connected" mode).
+- **The penalty fired and held (stage-1c check passed).** One WARNING at 03:41:19 (`nspanel … reported a connection to …
+  F5:55 … that was not really there`), no `Cannot steer`. From 03:41:21 Tür's connects ran via `ble-tracker` (~1/min) and
+  **stayed there**. nspanel got only isolated retries (07:30, 08:21, 09:11, 09:50, 09:55), each again a 10s teardown. This
+  is unlike the eighth incident, where it bounced back after 1–3 polls.
+- **New: the phantom link cleared without a proxy restart.** No proxy attempted DD:28 between 03:41 and 10:01. Then nspanel
+  tried again (so it was advertising), and PC Ecke was available at 10:05:49. Neither proxy had rebooted. Why the link
+  dropped is unknown.
+- **New: nspanel stopped completing connections at all.** Bett Ecke (C4:C1) connect on nspanel at 07:02:21 → `OPEN_EVT`
+  07:02:41. Bett did *not* vanish (it kept working via ble-tracker). But from then on **every** nspanel connect failed: a
+  20s connect timeout (`Timeout waiting for connect response … disconnect timed out`) and a `Timeout waiting for teardown`
+  30s after `Connecting` (10s for Tür, the fake-connection variant). In the 24h up to 10-16 19:22 that was 26 of 26 nspanel
+  attempts, zero successes, logged as `Connecting v3 without cache` from 10-15 evening. Scanning still worked: nspanel was
+  still the freshest advert source for all four stations. habluetooth's own failure count steered everything onto
+  `ble-tracker` without any station going unavailable. That held ~36h with no proxy restart. An HA restart (10-15 12:00 and
+  12:05) did **not** cure it. It reset the failure counts, so HA routed back to nspanel, causing a teardown burst
+  12:06–12:36 and Tür/Bett unavailable for a few minutes until the counts built up again.
+- Since the 12:05 restart: `became_unavailable` 0 on all four, ~1,800 connects each, 10–18 abandoned (the nspanel attempts),
+  `suspected_stranded_slots` / `out_of_slots` 0, two lock timeouts on Tür. `ble-tracker` carried all four at −92…−97 dBm.
+  One `No free connections available` (10-16 18:52). It had not rebooted (uptime ~2.8 days, 90 KB heap free), but its
+  largest free block was 32 KB, down from ~55 KB. Watch it.
+- NSPanel load signs this time: `mqtt took a long time (122 ms)`, `TCP buffer full`, `page_screensaver is already running`.
+
+**Takeaways.** Steering works at two levels: the integration's penalty for fake connections, and habluetooth's failure count
+for connect timeouts. A wedged proxy no longer takes stations down as long as another proxy reaches them. Neither prevents the
+phantom link itself. After an HA restart, expect a burst of failures on a still-wedged proxy until the failure counts build up
+again, so restart the wedged proxy along with HA. Every wedge so far sits on nspanel, while ble-tracker carried the same
+traffic for 36h without one. That points at the NSPanel, but overload as the cause is still unproven.
+
+**Next: test-plan stage 2, starting 2026-10-16 evening.** The user is building a dedicated ESP32 BLE proxy for the room. Remove
+`bluetooth_proxy` from the NSPanel, then confirm via diagnostics `seen_by` that all four stations are on the new proxy and
+`ble-tracker`. No phantom links / teardown loops afterwards → the NSPanel was the cause. If they recur on the dedicated proxy,
+look at Bluedroid / ESP-IDF in general.
+
 ## Conventions
 
 - User-facing strings live in `translations/{en,de,es,fr,it,nl}.json` and must be kept in sync across all
