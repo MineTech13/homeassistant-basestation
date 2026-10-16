@@ -5,6 +5,7 @@ import logging
 import struct
 import time
 from abc import ABC, abstractmethod
+from collections import deque
 from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
 from attr import dataclass
@@ -43,7 +44,7 @@ from .const import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Awaitable, Callable, Iterable
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -150,6 +151,9 @@ class BLEOperationWrite:
     # is only queued locally when write_gatt_char() returns; dropping the link straight away can
     # discard it before it is sent over the air. 0 keeps the previous behavior.
     settle_delay: float = 0.0
+    # Called with the still-connected client after the writes (and settle_delay). None keeps the
+    # previous behavior.
+    after_write: "Callable[[BleakClientWithServiceCache], Awaitable[None]] | None" = None
 
 
 def build_v1_command(command: V1Command, pair_id: int) -> bytes:
@@ -480,6 +484,8 @@ class BasestationDevice(ABC):
                 await asyncio.sleep(op.repeat_delay)
         if op.settle_delay:
             await asyncio.sleep(op.settle_delay)
+        if op.after_write:
+            await op.after_write(client)
         return True
 
     async def _execute_single_ble_attempt(
@@ -1268,6 +1274,9 @@ class ViveBasestationDevice(BasestationDevice):
         # hardware has reported this yet; it's what tells us whether V1 exposes the standard
         # Device Information characteristics at all, and how its power characteristic is flagged.
         self.gatt_services: list[dict[str, Any]] | None = None
+        # The power characteristic turned out to be readable (#4). Recent reads, next to the last command
+        # we sent, so testers can tell whether the value follows the on/off state.
+        self.power_char_reads: deque[dict[str, Any]] = deque(maxlen=5)
 
     @property
     def default_name(self) -> str:
@@ -1328,6 +1337,7 @@ class ViveBasestationDevice(BasestationDevice):
                 repeat_count=3,
                 repeat_delay=1.0,
                 settle_delay=1.0,
+                after_write=lambda client: self._record_power_char(client, command.name),
             )
         )
         _LOGGER.debug("Sent %s to V1 basestation %s: %s", command.name, self.mac, "ok" if sent else "failed")
@@ -1412,10 +1422,35 @@ class ViveBasestationDevice(BasestationDevice):
         self, client: BleakClientWithServiceCache, info: dict[BaseStationDeviceInfoKey, Any]
     ) -> bool:
         self._record_gatt_services(client)
+        await self._record_power_char(client, "info read")
         if self.pair_id:
             info["pair_id"] = f"0x{self.pair_id:08X}"
             return True
         return False
+
+    async def _record_power_char(self, client: BleakClientWithServiceCache, trigger: str) -> None:
+        """
+        Read the power characteristic once, for diagnostics only. Nothing acts on the value yet.
+
+        Runs after each on/off (trigger = the command, which is also the state it should show) and on
+        the info read (trigger "info read", with our last known state).
+        """
+        entry: dict[str, Any] = {"at": time.time(), "trigger": trigger}
+        if trigger == "info read":
+            entry["last_command_on"] = self._is_on
+        try:
+            value = bytes(await client.read_gatt_char(V1_PWR_CHARACTERISTIC))
+        except Exception as err:  # diagnostics only, must never fail the info read
+            entry["error"] = str(err)
+        else:
+            hex_bytes = [f"{b:02x}" for b in value]
+            # If the station echoes the last command, bytes 4-7 are the pair ID. Diagnostics get posted
+            # publicly, so mask them.
+            if self.pair_id and value[4:8] == struct.pack("<I", self.pair_id):
+                hex_bytes[4:8] = ["xx"] * 4
+            entry["value"] = " ".join(hex_bytes)
+        self.power_char_reads.append(entry)
+        _LOGGER.debug("V1 basestation %s power characteristic: %s", self.mac, entry)
 
     def _record_gatt_services(self, client: BleakClientWithServiceCache) -> None:
         """Keep the station's GATT layout for diagnostics, warning once if the power characteristic is missing."""

@@ -130,6 +130,9 @@ def _device_info(device: BasestationDevice) -> dict[str, Any]:
             v1_pair_id_matches_name(device.pair_id, service_info.name) if device.pair_id and service_info else None
         )
         data["gatt_services"] = device.gatt_services
+        data["power_char_reads"] = [
+            {**read, "at": _timestamp(read["at"]), "seconds_ago": _age(read["at"])} for read in device.power_char_reads
+        ]
 
     return data
 

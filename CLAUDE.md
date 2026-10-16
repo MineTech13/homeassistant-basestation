@@ -639,6 +639,21 @@ logs nothing. Response on `v1-test`: `_warn_if_only_passively_seen()` (one WARNI
 `scanner_count_total` / `seen_by_any` in diagnostics, README note. The same report exposed that `cached_info` in
 diagnostics wasn't redacted, so both testers' pair IDs are public in #4 (fixed on `dev`, `105592c`).
 
+**First confirmed working on hardware (supertin, `2.1.0-alpha.8+v1test.2`, 2026-10-16):** after switching to an ESP32 proxy
+(connectable), on/off works. GATT layout of a real V1 (`gatt_services`):
+- `0000cb00` service with `0000cb01` flagged **`read, write`**, not `write-without-response`. We still write without
+  response (as Lighthouse does) and it works. The characteristic being readable is new.
+- `180a` Device Information with only `2a29` (manufacturer, reads "Broadcom", the BLE chip vendor), `2a24` (model,
+  "2.11" padded with NULs, now stripped on `dev` `eb858a9`) and `2a23` (system ID). No firmware/hardware revision,
+  so those sensors stay unknown.
+- An unknown service `9e5d1e47-5c13-43a0-8635-82ad38a1386f` (write/notify/indicate + write + read), probably
+  firmware update. Don't touch it.
+
+Open question being tested in `v1test.3`: does reading `cb01` reflect the power state? `_record_power_char()` reads it
+after every on/off (via the opt-in `BLEOperationWrite.after_write` hook) and on the info read, and diagnostics show the
+last 5 reads as `power_char_reads` (bytes 4–7 masked if they equal the pair ID). If the value follows on/off, V1 could
+get a real state readback instead of the last-command guess.
+
 ## Conventions
 
 - User-facing strings live in `translations/{en,de,es,fr,it,nl}.json` and must be kept in sync across all
