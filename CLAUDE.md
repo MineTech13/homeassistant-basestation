@@ -654,6 +654,17 @@ after every on/off (via the opt-in `BLEOperationWrite.after_write` hook) and on 
 last 5 reads as `power_char_reads` (bytes 4–7 masked if they equal the pair ID). If the value follows on/off, V1 could
 get a real state readback instead of the last-command guess.
 
+**Result (supertin, `v1test.3`, 2026-10-18, both stations, identical):** `cb01` reads 20 bytes, never the pair ID.
+- after `TURN_ON` (written `12 00 00 00` + BSID): `00 12 00 00 00…`
+- after `TURN_OFF` (written `12 02 00 01` + BSID): `00 12 00 01 00…`
+- info read at HA start, last command was off: `00 12 00 01 00…`
+
+So the value follows on/off, but it is **not proven to be the real state**. Byte 3 matches the last byte of the command
+prefix we wrote (`00` / `01`), and the mode byte (`00` / `02`) isn't in it, so it may just be "last command received".
+The tester wasn't in the room, so the physical state wasn't checked either. To settle it: a state change that didn't come
+from us (unplug and replug a station, which should come up on, then reload the entry) and a read compared with what the
+station actually does. Until then nothing acts on the value.
+
 ## Conventions
 
 - User-facing strings live in `translations/{en,de,es,fr,it,nl}.json` and must be kept in sync across all
