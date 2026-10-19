@@ -90,7 +90,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     fast_scan_interval = entry.options.get(CONF_FAST_POLLING_INTERVAL, DEFAULT_FAST_POLLING_INTERVAL)
 
     if mac:
-        connection_timeout = entry.options.get(CONF_CONNECTION_TIMEOUT, DEFAULT_CONNECTION_TIMEOUT)
+        # The migration drops 2.0.x's shorter timeouts, but an entry saved again by 2.0.1 after a
+        # downgrade is already at 1.2 and isn't migrated twice.
+        connection_timeout = max(
+            entry.options.get(CONF_CONNECTION_TIMEOUT, DEFAULT_CONNECTION_TIMEOUT), MIN_CONNECTION_TIMEOUT
+        )
         device = get_basestation_device(
             hass,
             mac,
