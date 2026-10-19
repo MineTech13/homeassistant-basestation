@@ -145,6 +145,9 @@ enabled, the recorder keeps their history far longer than the logs.
 - User-facing strings live in `translations/{en,de,es,fr,it,nl}.json` and must be kept in sync across all
   six — several past commits exist solely to backfill a string that was added to `en.json` but missed in the
   others. Check all six whenever `config_flow.py` option descriptions/errors/keys change.
+- Config entries are at version 1.2. Changes to what an existing entry stores (data or options) go into
+  `async_migrate_entry` in `__init__.py` with a `MINOR_VERSION` bump in `config_flow.py`. A minor bump keeps
+  downgrades working: HA still loads an entry with a newer minor version if the old code has no migration for it.
 - `const.py` has no third-party imports by design (clean separation from `bleak`/HA internals); constants
   that need to reference library internals (e.g. `bleak_retry_connector` timeout values) do so via a comment
   citing the exact constant name rather than importing it there, but `device.py` itself does import

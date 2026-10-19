@@ -8,20 +8,6 @@ From the review of [PR #18](https://github.com/MineTech13/homeassistant-basestat
 at `b890651` (2026-10-19). The five blockers from that review were fixed before 2.1.0 shipped. These are the rest,
 ordered by impact. Function names are given instead of line numbers, since those drift.
 
-### 4. Old 10 s connection timeout survives the upgrade from 2.0.1
-
-- **Where:** `__init__.py`, `async_setup_entry()`, plus the config entry version in `config_flow.py` (`VERSION = 1`,
-  no `async_migrate_entry` yet).
-- **Problem:** The 2.0.1 options form pre-filled its default of 10 s and saved it on every submit. Entries that
-  stored it keep 10 s (now the minimum), and the new default of 20 s never applies to them. Values of 5 to 9 are
-  clamped to 10 at setup, but the options form then suggests the stored value and fails `vol.Range(min=10)` on a
-  field the user never touched.
-- **When it happens:** Through ESPHome proxies, connects often take 10 to 20 s. Each one is given up at 10 s, starts
-  the 180 s cooldown, finishes anyway and is closed again. The station is then effectively read every 3 minutes.
-- **Workaround (in the 2.1.0 release notes):** clear the field under **Configure**.
-- **Fix:** Add `async_migrate_entry` with a `MINOR_VERSION` bump that removes `connection_timeout` from the options
-  when it is 10 or less, so the entry follows the default.
-
 ### 5. Fake connections during info reads aren't penalised
 
 - **Where:** `device.py`, `_read_standard_characteristics()` and V2 `_read_specific_info()` catch `BleakError` per

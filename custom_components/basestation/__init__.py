@@ -32,6 +32,28 @@ _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = [Platform.SWITCH, Platform.BUTTON, Platform.SENSOR]
 
+# Options the 2.0.1 form saved that nothing reads any more.
+OBSOLETE_OPTIONS = (CONF_NAME, "enable_info_sensors")
+
+
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Migrate a config entry from an older version."""
+    if entry.version > 1:
+        # Written by a newer major version this one can't read (a downgrade).
+        return False
+
+    if entry.minor_version < 2:  # noqa: PLR2004
+        # The 2.0.1 options form pre-filled its 10 s default (minimum 5) and saved it on every
+        # submit, so most entries that ever opened it are pinned to the value that is now the
+        # minimum, and anything lower fails the current form. Drop it so they follow the default.
+        options = {key: value for key, value in entry.options.items() if key not in OBSOLETE_OPTIONS}
+        if options.get(CONF_CONNECTION_TIMEOUT, DEFAULT_CONNECTION_TIMEOUT) <= MIN_CONNECTION_TIMEOUT:
+            del options[CONF_CONNECTION_TIMEOUT]
+        hass.config_entries.async_update_entry(entry, options=options, minor_version=2)
+        _LOGGER.debug("Migrated config entry %s to version 1.2", entry.title)
+
+    return True
+
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up VR Basestation from a config entry."""
@@ -48,11 +70,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     fast_scan_interval = entry.options.get(CONF_FAST_POLLING_INTERVAL, DEFAULT_FAST_POLLING_INTERVAL)
 
     if mac:
-        # max() guards against entries created before MIN_CONNECTION_TIMEOUT was raised, which may
-        # still have a lower value stored from before the options form re-validates it.
-        connection_timeout = max(
-            entry.options.get(CONF_CONNECTION_TIMEOUT, DEFAULT_CONNECTION_TIMEOUT), MIN_CONNECTION_TIMEOUT
-        )
+        connection_timeout = entry.options.get(CONF_CONNECTION_TIMEOUT, DEFAULT_CONNECTION_TIMEOUT)
         device = get_basestation_device(
             hass,
             mac,

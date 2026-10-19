@@ -56,6 +56,8 @@ class BasestationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for VR Basestation."""
 
     VERSION = 1
+    # 2: dropped the connection_timeout that 2.0.1 pinned at 10 s, see async_migrate_entry.
+    MINOR_VERSION = 2
 
     def __init__(self) -> None:
         """Initialize the config flow."""
