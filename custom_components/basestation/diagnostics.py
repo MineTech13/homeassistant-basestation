@@ -156,6 +156,7 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: ConfigE
         "entry": {
             "title": entry.title,
             "version": entry.version,
+            "minor_version": entry.minor_version,
             "data": async_redact_data(dict(entry.data), TO_REDACT),
             "options": dict(entry.options),
         },
