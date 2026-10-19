@@ -161,10 +161,6 @@ enabled, the recorder keeps their history far longer than the logs.
   penalty did nothing under the compiled 6.x build, and again under 7.x). A scratch venv with just `habluetooth==<pin>` is enough; the wrapper is plain Python and the scanner
   is Cython.
 
-## Open work
-
-`TODO.md` lists the review findings planned for 2.1.1, with where each one is and a suggested fix.
-
 ## Releasing
 
 - Set the exact version in **both** `custom_components/basestation/manifest.json` and `pyproject.toml` before

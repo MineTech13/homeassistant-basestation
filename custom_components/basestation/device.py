@@ -197,6 +197,8 @@ class BasestationDevice(ABC):
         self._last_connection_attempt = 0.0
         self._consecutive_failures = 0
         self._last_failure_time = 0.0
+        # Wall-clock time the device last became unavailable, 0 while available.
+        self._unavailable_since = 0.0
         self._last_successful_connection = 0.0
         self._current_client: BleakClientWithServiceCache | None = None
         self._client_lock = asyncio.Lock()
@@ -404,7 +406,8 @@ class BasestationDevice(ABC):
         self._available = available
 
         if available:
-            downtime = time.time() - self._last_failure_time if self._last_failure_time else None
+            downtime = time.time() - self._unavailable_since if self._unavailable_since else None
+            self._unavailable_since = 0.0
             self.connection_log.record(Phase.AVAILABILITY, Outcome.AVAILABLE, detail=reason, duration=downtime)
             _LOGGER.info(
                 "Basestation %s is available again (%s)%s",
@@ -414,6 +417,7 @@ class BasestationDevice(ABC):
             )
             return
 
+        self._unavailable_since = time.time()
         self.connection_log.stats.became_unavailable += 1
         self.connection_log.record(Phase.AVAILABILITY, Outcome.UNAVAILABLE, detail=reason)
 
