@@ -64,49 +64,55 @@ class BasestationCoordinator(DataUpdateCoordinator):
         except Exception as err:
             msg = f"Error communicating with basestation: {err}"
             raise UpdateFailed(msg) from err
+        finally:
+            # After a failed poll too: otherwise a station that starts timing out mid-boot keeps
+            # being polled at fast_interval, since neither check below would ever run again.
+            self._adjust_poll_interval()
+
+        return {
+            "is_on": self.device.is_on,
+            "available": self.device.available,
+            "last_power_state": self.device.last_power_state,
+        }
+
+    def _adjust_poll_interval(self) -> None:
+        """Poll at fast_interval while the station is booting, within MAX_FAST_POLLING_DURATION."""
+        booting_states = (
+            BasestationPowerState.STARTING_UP,
+            BasestationPowerState.BOOTING_1,
+            BasestationPowerState.BOOTING_2,
+        )
+
+        # If last_power_state is a booting value but hasn't been confirmed by a read recently,
+        # the device has stopped responding rather than actually still booting - back off to
+        # the normal interval instead of polling at fast_interval forever. "Recently" is scaled
+        # to fast_interval (not a fixed constant) so this stays correct however the user has it
+        # configured.
+        state_age = self.device.last_power_state_age
+        is_state_fresh = state_age is not None and state_age < (self.fast_interval.total_seconds() * 2)
+        is_booting = self.device.last_power_state in booting_states and is_state_fresh
+
+        # Freshness can't catch a station that keeps *answering* STARTING_UP: every fast poll
+        # re-confirms it. Cap each boot episode instead, so a stuck station drops back to the
+        # normal interval rather than hammering the proxy with a connect every few seconds.
+        if not is_booting:
+            self._boot_seen_at = None
+            self.update_interval = self.default_interval
         else:
-            booting_states = (
-                BasestationPowerState.STARTING_UP,
-                BasestationPowerState.BOOTING_1,
-                BasestationPowerState.BOOTING_2,
-            )
-
-            # If last_power_state is a booting value but hasn't been confirmed by a read recently,
-            # the device has stopped responding rather than actually still booting - back off to
-            # the normal interval instead of polling at fast_interval forever. "Recently" is scaled
-            # to fast_interval (not a fixed constant) so this stays correct however the user has it
-            # configured.
-            state_age = self.device.last_power_state_age
-            is_state_fresh = state_age is not None and state_age < (self.fast_interval.total_seconds() * 2)
-            is_booting = self.device.last_power_state in booting_states and is_state_fresh
-
-            # Freshness can't catch a station that keeps *answering* STARTING_UP: every fast poll
-            # re-confirms it. Cap each boot episode instead, so a stuck station drops back to the
-            # normal interval rather than hammering the proxy with a connect every few seconds.
-            if not is_booting:
-                self._boot_seen_at = None
-                self.update_interval = self.default_interval
+            now = time.monotonic()
+            if self._boot_seen_at is None:
+                self._boot_seen_at = now
+            if now - self._boot_seen_at < MAX_FAST_POLLING_DURATION:
+                self.update_interval = self.fast_interval
             else:
-                now = time.monotonic()
-                if self._boot_seen_at is None:
-                    self._boot_seen_at = now
-                if now - self._boot_seen_at < MAX_FAST_POLLING_DURATION:
-                    self.update_interval = self.fast_interval
-                else:
-                    if self.update_interval != self.default_interval:
-                        _LOGGER.warning(
-                            "%s still reports %s after %ss, falling back to the normal poll interval",
-                            self.device.mac,
-                            self.device.last_power_state,
-                            MAX_FAST_POLLING_DURATION,
-                        )
-                    self.update_interval = self.default_interval
-
-            return {
-                "is_on": self.device.is_on,
-                "available": self.device.available,
-                "last_power_state": self.device.last_power_state,
-            }
+                if self.update_interval != self.default_interval:
+                    _LOGGER.warning(
+                        "%s still reports %s after %ss, falling back to the normal poll interval",
+                        self.device.mac,
+                        self.device.last_power_state,
+                        MAX_FAST_POLLING_DURATION,
+                    )
+                self.update_interval = self.default_interval
 
 
 class BasestationInfoCoordinator(DataUpdateCoordinator):

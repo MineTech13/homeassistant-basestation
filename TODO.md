@@ -8,17 +8,6 @@ From the review of [PR #18](https://github.com/MineTech13/homeassistant-basestat
 at `b890651` (2026-10-19). The five blockers from that review were fixed before 2.1.0 shipped. These are the rest,
 ordered by impact. Function names are given instead of line numbers, since those drift.
 
-### 6. Fast polling continues when polls fail
-
-- **Where:** `coordinator.py`, `BasestationCoordinator._async_update_data()`: the interval logic and the
-  `MAX_FAST_POLLING_DURATION` cap only run in the `else:` (success) branch.
-- **When it happens:** A station starts booting, so polling switches to 5 s. Then `update()` starts raising or
-  exceeding the coordinator timeout (`connection_timeout * 3 + 10`), e.g. a GATT read that hangs, or a long lock wait
-  plus two slow connects. The interval stays at 5 s and the 120 s cap is never checked. Normal failures don't hit
-  this, because `async_ble_operation()` returns `False` instead of raising.
-- **Fix:** Run the interval logic in a `finally`, or fall back to `default_interval` and reset `_boot_seen_at` in
-  the `except` branches.
-
 ### 7. Firmware and hardware version missing on the device page
 
 - **Where:** `device.py`, `device_info` property. Entities copy it in their `__init__`
