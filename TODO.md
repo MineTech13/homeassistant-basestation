@@ -8,29 +8,6 @@ From the review of [PR #18](https://github.com/MineTech13/homeassistant-basestat
 at `b890651` (2026-10-19). The five blockers from that review were fixed before 2.1.0 shipped. These are the rest,
 ordered by impact. Function names are given instead of line numbers, since those drift.
 
-### 1. One failed info refresh marks the station unavailable
-
-- **Where:** `device.py`, `read_device_info()`: `_record_connection_failure()` is called inside the retry loop.
-- **Problem:** It counts one failure per attempt (`INFO_READ_RETRIES` = 3), while a state poll counts one per cycle.
-  `UNAVAILABLE_AFTER_CONSECUTIVE_FAILURES` is also 3, so a single failed refresh is enough.
-- **When it happens:** Only connect timeouts start the cooldown that ends the retries early. Other failures run all
-  three attempts within about 10 s: out of slots, proxy restarting, a station that stopped advertising. All
-  entities flap to unavailable. On V1 it is worse: `ViveBasestationDevice.update()` keeps the station unavailable for
-  `UNAVAILABLE_RETRY_COOLDOWN` (300 s), and HA doesn't run entity services on unavailable entities, so the station
-  can't be switched for 5 minutes.
-- **Fix:** Call `_record_connection_failure()` once, after the loop, only if every attempt failed.
-
-### 2. Info sensors drop cached values after a partial read
-
-- **Where:** `device.py`, `read_device_info()` returns `info` (only what this pass read) instead of the merged
-  `self._info`. `BasestationInfoCoordinator` uses that as `coordinator.data`, and `BasestationInfoSensor.native_value`
-  reads from it.
-- **When it happens:** On a refresh the firmware read fails but model and channel succeed. Firmware shows `unknown`
-  until the next complete read, 30 minutes later by default. On V1, `_read_specific_info()` always succeeds when a
-  pair ID is set, so a refresh where every standard read failed still returns `{pair_id}` and blanks firmware,
-  model, hardware and manufacturer.
-- **Fix:** After `self._info |= info`, return `dict(self._info)`.
-
 ### 3. Info sensors stay `unknown` for 30 minutes after a failed first read
 
 - **Where:** `__init__.py` starts one info refresh at setup. `read_device_info()` returns the empty `self._info`

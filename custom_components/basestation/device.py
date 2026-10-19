@@ -1095,9 +1095,13 @@ class BasestationDevice(ABC):
                     self._record_connection_success()
                     self._last_device_info_read = current_time
                     self._device_info_read_success = True
-                    return info
+                    # The merged view, not just this pass: a read where some characteristics failed
+                    # would otherwise blank their sensors until the next full read.
+                    return dict(self._info)
 
-                self._record_connection_failure()
+            # One failure per refresh, like a state poll. Counting each attempt let a single failed
+            # refresh reach UNAVAILABLE_AFTER_CONSECUTIVE_FAILURES on its own.
+            self._record_connection_failure()
 
         finally:
             self._release_lock()
