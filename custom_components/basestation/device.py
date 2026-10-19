@@ -1084,6 +1084,7 @@ class BasestationDevice(ABC):
         if not await self._acquire_lock(lock_timeout, "device info read"):
             return self._info
 
+        refresh_failed = False
         try:
             if self._skip_poll_for_cooldown("device info read"):
                 return self._info
@@ -1104,6 +1105,7 @@ class BasestationDevice(ABC):
                 info = await self._attempt_device_info_read()
 
                 if info:
+                    refresh_failed = False
                     self._info |= info
                     self._record_connection_success()
                     self._last_device_info_read = current_time
@@ -1111,12 +1113,14 @@ class BasestationDevice(ABC):
                     # The merged view, not just this pass: a read where some characteristics failed
                     # would otherwise blank their sensors until the next full read.
                     return dict(self._info)
-
-            # One failure per refresh, like a state poll. Counting each attempt let a single failed
-            # refresh reach UNAVAILABLE_AFTER_CONSECUTIVE_FAILURES on its own.
-            self._record_connection_failure()
+                refresh_failed = True
 
         finally:
+            # One failure per refresh, like a state poll. Counting each attempt let a single failed
+            # refresh reach UNAVAILABLE_AFTER_CONSECUTIVE_FAILURES on its own. Here rather than after
+            # the loop, so a refresh the coordinator's timeout cancels after a failed attempt counts too.
+            if refresh_failed:
+                self._record_connection_failure()
             self._release_lock()
 
         return self._info
