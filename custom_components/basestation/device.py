@@ -1384,8 +1384,11 @@ class ViveBasestationDevice(BasestationDevice):
         Restore the last known on/off state after a restart, until the first poll reads it back.
 
         Better than the fresh-object default of False, which would show a station that's on as off
-        until then.
+        until then. The entity is added after the first poll, so skip it if that poll already read
+        a state: the restored one is older.
         """
+        if self.last_readback is not None and self.last_readback["meaning"] != "unknown":
+            return
         self._is_on = is_on
 
     async def turn_on(self) -> None:
