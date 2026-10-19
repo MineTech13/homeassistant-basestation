@@ -245,13 +245,15 @@ station actually does. Until then nothing acts on the value.
   `vX.Y.Z-alpha.00N` spelling.
 - Order: lint gate (`ruff format --check . && ruff check . && mypy custom_components/basestation`) → bump
   commit → push `dev` → tag → `gh release create <tag> --prerelease --target dev`.
-- **V1 test builds** (for #4) are cut from `v1-test`, not `dev` (`--target v1-test`): version
-  `<dev version>+v1test.N` (e.g. `2.1.0-alpha.7+v1test.1`), tag `vX.Y.Z-alpha.00N-v1test.00M`. N counts up across
-  all V1 builds and does not restart when the dev base changes, so testers can name a build by it. Build metadata
-  rather than a fourth pre-release segment because `pyproject.toml` must be PEP 440: ruff's RUF200 rejects
-  `2.1.0-alpha.7.v1test.1`, while `+v1test.1` is valid PEP 440 and valid SemVer for hassfest. Release notes must say
-  the V1 work stays on its branch for at least one to two months and that later `dev` pre-releases don't contain
-  the V1 changes.
+- **V1 test builds** (for #4) are cut from `v1-test`, not `dev` (`--target v1-test`). Since 2.1.0: version
+  `2.2.0-v1-test.N` in `manifest.json` (the name the README announces), tag `v2.2.0-v1-test.00N`. SemVer sorts it
+  above 2.1.x and above `2.2.0-alpha.*` from `dev` (`v1-test` > `alpha`), so HACS never offers testers a build
+  without the V1 changes, and below the final 2.2.0. `pyproject.toml` must be PEP 440 (ruff's RUF200), which
+  `v1-test` isn't, so it gets `2.2.0a0+v1test.N`; HA and HACS only read the manifest. Up to `v1test.3` the scheme was
+  `<dev version>+v1test.N` (e.g. `2.1.0-alpha.8+v1test.3`), which broke once `dev` was stable: `2.1.0+v1test.4`
+  compares equal to 2.1.0, and 2.1.1 would be offered as an update that drops the V1 changes. N counts up across
+  all V1 builds and never restarts, so testers can name a build by it. Release notes must say the V1 work stays on
+  its branch for at least one to two months and that later `dev` releases don't contain the V1 changes.
 - Stable releases: bump to `X.Y.Z` on `dev`, PR `dev` → `main` (protected, needs one approving review, merge commit),
   then tag the merge commit on `main` and `gh release create vX.Y.Z --target main` (not a pre-release).
 - Pre-releases are cut from `dev`. Exception: `v2.1.0-alpha.004` was tagged on the since-deleted `alt-test`
