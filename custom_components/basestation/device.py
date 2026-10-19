@@ -285,8 +285,13 @@ class BasestationDevice(ABC):
 
     @property
     def cached_info(self) -> dict[BaseStationDeviceInfoKey, str]:
-        """Return the cached device information."""
-        return self._info
+        """
+        Return a copy of the cached device information.
+
+        A copy, like everything read_device_info() returns: handed out as is, it becomes the info
+        coordinator's data, which the next read would then change in place.
+        """
+        return dict(self._info)
 
     @property
     def has_cached_info(self) -> bool:
@@ -1081,17 +1086,17 @@ class BasestationDevice(ABC):
             and self._device_info_read_success
             and (current_time - self._last_device_info_read < self.info_scan_interval)
         ):
-            return self._info
+            return dict(self._info)
 
         lock_timeout = 15.0 if not self._device_info_read_success else 5.0
 
         if not await self._acquire_lock(lock_timeout, "device info read"):
-            return self._info
+            return dict(self._info)
 
         refresh_failed = False
         try:
             if self._skip_poll_for_cooldown("device info read"):
-                return self._info
+                return dict(self._info)
 
             for attempt in range(INFO_READ_RETRIES):
                 if attempt > 0:
@@ -1127,7 +1132,7 @@ class BasestationDevice(ABC):
                 self._record_connection_failure()
             self._release_lock()
 
-        return self._info
+        return dict(self._info)
 
     @abstractmethod
     async def _read_specific_info(
