@@ -1,0 +1,25 @@
+name: Feature request
+description: Suggest a new feature or an improvement
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like?
+      description: The feature or change, and what you would use it for.
+    validations:
+      required: true
+  - type: dropdown
+    id: station
+    attributes:
+      label: Base station type
+      options:
+        - Valve Index (V2)
+        - HTC Vive (V1)
+        - Both
+        - Not station specific
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Anything else?
+      description: Workarounds you use today, links, screenshots.

@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Known issues
+    url: https://github.com/MineTech13/homeassistant-basestation/blob/main/ISSUES.md
+    about: Known problems and workarounds, worth a look before opening an issue.
+  - name: V1 (HTC Vive) testing
+    url: https://github.com/MineTech13/homeassistant-basestation/issues/4
+    about: Feedback on V1 stations and the v1-test builds goes here.
