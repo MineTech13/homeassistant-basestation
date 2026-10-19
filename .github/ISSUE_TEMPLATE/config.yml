@@ -1,4 +1,4 @@
-blank_issues_enabled: false
+blank_issues_enabled: true
 contact_links:
   - name: Known issues
     url: https://github.com/MineTech13/homeassistant-basestation/blob/main/ISSUES.md
