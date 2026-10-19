@@ -1007,6 +1007,10 @@ class BasestationDevice(ABC):
                     info[key] = _value.decode("utf-8").replace("\x00", "").strip()
                     any_read_successful = True
             except BleakError as err:
+                # Nothing read yet on this connection: a proxy faking it. Fail the attempt so the
+                # proxy is penalised, as for a state poll (see _react_to_attempt_failure).
+                if _is_phantom_connection_error(err) and not info:
+                    raise
                 _LOGGER.debug("BLE error reading characteristic %s: %s", key, err)
             except TimeoutError as err:
                 _LOGGER.debug("Timeout reading characteristic %s: %s", key, err)
@@ -1242,6 +1246,9 @@ class ValveBasestationDevice(BasestationDevice):
                 info["channel"] = int.from_bytes(channel, byteorder="big")
                 return True
         except BleakError as err:
+            # See _read_standard_characteristics.
+            if _is_phantom_connection_error(err) and not info:
+                raise
             _LOGGER.debug("BLE error reading channel: %s", err)
         except TimeoutError as err:
             _LOGGER.debug("Timeout reading channel: %s", err)

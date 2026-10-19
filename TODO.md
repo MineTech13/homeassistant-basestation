@@ -8,18 +8,6 @@ From the review of [PR #18](https://github.com/MineTech13/homeassistant-basestat
 at `b890651` (2026-10-19). The five blockers from that review were fixed before 2.1.0 shipped. These are the rest,
 ordered by impact. Function names are given instead of line numbers, since those drift.
 
-### 5. Fake connections during info reads aren't penalised
-
-- **Where:** `device.py`, `_read_standard_characteristics()` and V2 `_read_specific_info()` catch `BleakError` per
-  characteristic.
-- **Problem:** A phantom connection (`Not connected` on the first read) never reaches
-  `_react_to_attempt_failure()`, so `_penalise_connected_proxy()` doesn't run. Every fake success also clears HA's
-  failure count for that proxy (see CLAUDE.md, "Proxy faking connections"). An info refresh can make three of them,
-  which undoes the penalty the state polls applied.
-- **Fix:** In the per-characteristic handlers, re-raise when `_is_phantom_connection_error(err)` so the attempt
-  fails through the normal path. Check it against the habluetooth version HA actually ships, as described in
-  CLAUDE.md.
-
 ### 6. Fast polling continues when polls fail
 
 - **Where:** `coordinator.py`, `BasestationCoordinator._async_update_data()`: the interval logic and the
