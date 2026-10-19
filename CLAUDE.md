@@ -4,8 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A Home Assistant custom integration (HACS) that controls Valve Index (V2) and HTC Vive (V1, untested/WIP —
-see [#4](https://github.com/MineTech13/homeassistant-basestation/issues/4)) VR lighthouse base stations
+A Home Assistant custom integration (HACS) that controls Valve Index (V2) and HTC Vive (V1, tested by users in
+[#4](https://github.com/MineTech13/homeassistant-basestation/issues/4)) VR lighthouse base stations
 directly over Bluetooth Low Energy — no SteamVR required. Domain: `basestation`. Lives entirely under
 `custom_components/basestation/`.
 
@@ -58,9 +58,7 @@ coordinator data as entities via `CoordinatorEntity`. `connection_log.py` (in-me
 `ValveBasestationDevice` / `ViveBasestationDevice`). All reads/writes go through `async_ble_operation()`,
 which holds a single `asyncio.Lock` per device (`_client_lock`) so state polling, info reads, and user
 commands (turn on/off/standby/identify) never race each other on the same physical connection. V1 has no
-readable state characteristic — `ViveBasestationDevice.update()` infers availability from advertisement
-visibility, and `_is_on` is just tracked locally from the last command sent since there's nothing to read
-back.
+readable power state: its poll reads the last command the station received instead (see the V1 section).
 
 **Connections are shared/deduplicated per device**, not per-call: `_await_connection()` reuses one in-flight
 `establish_connection()` task across concurrent-ish callers instead of racing multiple connection attempts
@@ -141,6 +139,42 @@ counted, not stored, and repeats are collapsed over `COLLAPSE_WINDOW` events; wi
 evicts the events that explain a failure within an hour. Six connection-health sensors exist, disabled by default;
 enabled, the recorder keeps their history far longer than the logs.
 
+## V1 (HTC Vive) support
+
+Tested by users in [#4](https://github.com/MineTech13/homeassistant-basestation/issues/4) (two stations, ESP32 proxy). Nobody
+on the team owns a V1 station, so anything new for V1 needs a tester. It was developed on the `v1-test` branch (synced by
+merging `dev` in, builds `…-v1test.N` / `2.2.0-v1-test.N`) and squashed into `dev` on 2026-10-19; the tags stay.
+
+**Protocol** (matches [ShayBox/Lighthouse](https://github.com/ShayBox/Lighthouse), which a user confirmed working):
+- Power characteristic `0000cb01-…` (service `0000cb00`). Command: 20 bytes, `12 00 00 00` (on) / `12 02 00 01` (off), the
+  BSID little-endian (`AABBCCDD` → `DD CC BB AA`), zero padding (`build_v1_command()`). Written without response, then stay
+  connected `V1_SETTLE_DELAY` (1 s): a write without response is only queued locally when `write_gatt_char()` returns.
+- A station silently ignores a command with the wrong ID. `HTC BS xxxxxx` ends in the BSID's last 4 hex digits, so the
+  config flow requires all 8 digits and rejects a mismatch (`v1_pair_id_matches_name()`); existing entries get one WARNING
+  from `update()`, diagnostics show `pair_id_matches_name`.
+
+**Reading `cb01` back** (`decode_v1_readback()`, `V1_READBACK_*`). It is the **last command the station received, not its
+real state**: `00 12 00 00` after on, `00 12 00 01` after off, all zeros after power-up with no command since. It survives HA
+restarts and never contains the pair ID. Used in three ways:
+- `update()` reads it on every state poll, like V2. That also gives V1 real availability from connects, through the shared
+  cooldown / failure / proxy-penalty path. Before, V1 only looked at advertisements, with its own 5-minute retry cooldown.
+- After a command, `_verify_power_command()` (the opt-in `BLEOperationWrite.after_write` hook) reads it back and rewrites
+  until it matches, at most `V1_COMMAND_ATTEMPTS` (3) writes. Still no match → `command_failed`. A failed read → "unverified",
+  and the state is taken from the command as before. Outcome in diagnostics as `last_command_result`.
+- Changes from SteamVR or other apps show up on the next poll if they use the same bytes; any other value is "unknown" and
+  leaves the state alone. All zeros counts as on (assumes a station comes up on when it gets power; not confirmed).
+Not known: whether a command with the wrong pair ID changes the read-back. So a confirmed command only proves the station
+received it. `readback` / `readback_changes` in diagnostics show the raw values.
+
+**Other findings from #4:**
+- HA needs a connectable adapter or proxy (ESPHome `active: true`). With only passive scanners, `get_ble_device()` is None,
+  nothing ever connects, and nothing logged it (the entry starts unavailable, so no transition), hence
+  `_warn_if_only_passively_seen()` and `scanner_count_total` / `seen_by_any` in diagnostics.
+- GATT layout: `cb01` is flagged `read, write` (we still write without response, it works). `180a` has only `2a29` ("Broadcom",
+  the chip vendor), `2a24` (model "2.11", NUL-padded) and `2a23`, so firmware/hardware stay unknown. Unknown service
+  `9e5d1e47-…`, probably firmware update; don't touch it. `gatt_services` in diagnostics, with one WARNING if `cb01` is missing.
+- `cached_info` in diagnostics wasn't redacted before `105592c`, so both testers' pair IDs are public in #4.
+
 ## Conventions
 
 - User-facing strings live in `translations/{en,de,es,fr,it,nl}.json` and must be kept in sync across all
@@ -172,6 +206,11 @@ enabled, the recorder keeps their history far longer than the logs.
   `vX.Y.Z-alpha.00N` spelling.
 - Order: lint gate (`ruff format --check . && ruff check . && mypy custom_components/basestation`) → bump
   commit → push `dev` → tag → `gh release create <tag> --prerelease --target dev`.
+- **2.2.0 pre-releases** (the V1 line, now cut from `dev`) keep the V1 test build scheme: `2.2.0-v1-test.N` in
+  `manifest.json`, tag `v2.2.0-v1-test.00N`, N counting on from the `v1-test` builds. `pyproject.toml` must be PEP 440
+  (ruff's RUF200), so it gets `2.2.0a0+v1test.N`; HA and HACS only read the manifest. SemVer sorts `v1-test` above
+  `alpha` and below the final 2.2.0. Don't use `<version>+v1test.N`: build metadata compares equal to the version
+  itself (`2.1.0+v1test.4` == 2.1.0).
 - Stable releases: bump to `X.Y.Z` on `dev`, PR `dev` → `main` (protected, needs one approving review, merge commit),
   then tag the merge commit on `main` and `gh release create vX.Y.Z --target main` (not a pre-release).
 - Pre-releases are cut from `dev`. Exception: `v2.1.0-alpha.004` was tagged on the since-deleted `alt-test`

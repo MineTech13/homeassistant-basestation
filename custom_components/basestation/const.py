@@ -65,6 +65,14 @@ class V1Command(bytes, Enum):
     TURN_OFF = b"\x12\x02\x00\x01"
 
 
+# What reading the V1 power characteristic returns (first 4 bytes, the rest is zero). It is the last
+# command the station received, not its real state (#4): 0x12 is the command ID and byte 3 the last
+# byte of the command prefix. All zeros means no command since the station powered up.
+V1_READBACK_ON = b"\x00\x12\x00\x00"
+V1_READBACK_OFF = b"\x00\x12\x00\x01"
+V1_READBACK_RESTARTED = b"\x00\x00\x00\x00"
+
+
 class V2Command(bytes, Enum):
     """Specific commands for Valve Basestations (V2)."""
 

@@ -5,6 +5,7 @@ import logging
 import struct
 import time
 from abc import ABC, abstractmethod
+from collections import deque
 from functools import partial
 from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
@@ -36,6 +37,9 @@ from .const import (
     MODEL_CHARACTERISTIC,
     V1_NAME_PREFIX,
     V1_PWR_CHARACTERISTIC,
+    V1_READBACK_OFF,
+    V1_READBACK_ON,
+    V1_READBACK_RESTARTED,
     V2_CHANNEL_CHARACTERISTIC,
     V2_IDENTIFY_CHARACTERISTIC,
     V2_NAME_PREFIX,
@@ -46,7 +50,7 @@ from .const import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Awaitable, Callable, Iterable
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -56,11 +60,13 @@ MAX_RETRIES = 2
 INFO_READ_RETRIES = 3
 UNAVAILABLE_AFTER_CONSECUTIVE_FAILURES = 3
 
-# V1 has no characteristic to actively read a status from, so unlike V2 its update() poll can't
-# naturally retry/self-heal on its own. Without this, once UNAVAILABLE_AFTER_CONSECUTIVE_FAILURES
-# is hit the device stays unavailable forever, even after it's back in range, until a user happens
-# to send a command that succeeds. This gives it another chance this long after it went unavailable.
-UNAVAILABLE_RETRY_COOLDOWN = 300.0
+# A V1 write without response is only queued locally when write_gatt_char() returns, so stay
+# connected this long after it before reading it back or disconnecting (as ShayBox/Lighthouse does).
+V1_SETTLE_DELAY = 1.0
+# A V1 command is checked by reading the power characteristic back (see decode_v1_readback) and
+# rewritten until the station shows it, at most this many writes in total. That's the three writes
+# V1 always got before the read-back existed.
+V1_COMMAND_ATTEMPTS = 3
 
 # A connect attempt we've stopped waiting for is normal and harmless (see _await_connection), but
 # one still running this long afterwards is not: establish_connection() only stays busy that long
@@ -149,6 +155,64 @@ class BLEOperationWrite:
     without_response: bool = False
     repeat_count: int = 1
     repeat_delay: float = 1.0
+    # Time to stay connected after the last write before disconnecting. A write without response
+    # is only queued locally when write_gatt_char() returns; dropping the link straight away can
+    # discard it before it is sent over the air. 0 keeps the previous behavior.
+    settle_delay: float = 0.0
+    # Called with the still-connected client after the writes (and settle_delay). None keeps the
+    # previous behavior.
+    after_write: "Callable[[BleakClientWithServiceCache], Awaitable[None]] | None" = None
+
+
+def build_v1_command(command: V1Command, pair_id: int) -> bytes:
+    """
+    Build the 20-byte V1 power command for a station's pair ID (BSID).
+
+    Byte layout matches ShayBox/Lighthouse's v1_command(), which users report switches V1
+    stations reliably: the 4-byte command prefix, the BSID little-endian (so "AABBCCDD" is sent
+    as DD CC BB AA), then zero padding.
+    """
+    command_bytes = bytearray(20)
+    command_bytes[0:4] = command.value
+    command_bytes[4:8] = struct.pack("<I", pair_id)
+    return bytes(command_bytes)
+
+
+V1Readback = Literal["on", "off", "restarted", "unknown"]
+
+# What the read-back shows once the station has received each command.
+V1_COMMAND_READBACK: dict[V1Command, V1Readback] = {V1Command.TURN_ON: "on", V1Command.TURN_OFF: "off"}
+
+
+def decode_v1_readback(value: bytes) -> V1Readback:
+    """
+    Decode a read of the V1 power characteristic.
+
+    It holds the last command the station received, not its real state (#4). "restarted" means no
+    command since the station powered up. Anything else, e.g. a command another app sent with
+    different bytes, is "unknown".
+    """
+    prefix = bytes(value[:4])
+    if prefix == V1_READBACK_ON:
+        return "on"
+    if prefix == V1_READBACK_OFF:
+        return "off"
+    if prefix == V1_READBACK_RESTARTED and not any(value):
+        return "restarted"
+    return "unknown"
+
+
+def v1_pair_id_matches_name(pair_id: int, name: str | None) -> bool | None:
+    """
+    Check a V1 pair ID against the station's advertised name.
+
+    A V1 station advertises as "HTC BS xxxxxx", ending in the last 4 hex digits of the BSID
+    printed on its back. ShayBox/Lighthouse matches stations to BSIDs this way. Returns None when
+    the name doesn't look like a V1 name, so there's nothing to check against.
+    """
+    if not name or not name.startswith(V1_NAME_PREFIX) or len(name) < len(V1_NAME_PREFIX) + 4:
+        return None
+    return name[-4:].upper() == f"{pair_id:08X}"[-4:]
 
 
 @dataclass(repr=False)
@@ -486,6 +550,10 @@ class BasestationDevice(ABC):
             )
             if i < op.repeat_count - 1:
                 await asyncio.sleep(op.repeat_delay)
+        if op.settle_delay:
+            await asyncio.sleep(op.settle_delay)
+        if op.after_write:
+            await op.after_write(client)
         return True
 
     async def _execute_single_ble_attempt(
@@ -1290,6 +1358,16 @@ class ViveBasestationDevice(BasestationDevice):
         self.pair_id = pair_id
         if pair_id is not None:
             self._info["pair_id"] = f"0x{pair_id:08X}"
+        self._pair_id_checked = False
+        self._passive_only_warned = False
+        # GATT layout seen on the last info read, for diagnostics. It shows straight away whether a
+        # station that won't switch exposes the power characteristic at all.
+        self.gatt_services: list[dict[str, Any]] | None = None
+        # For diagnostics: the last read of the power characteristic, the last few reads that changed
+        # it, and how the last command's read-back went.
+        self.last_readback: dict[str, Any] | None = None
+        self.readback_changes: deque[dict[str, Any]] = deque(maxlen=5)
+        self.last_command_result: dict[str, Any] | None = None
 
     @property
     def default_name(self) -> str:
@@ -1298,108 +1376,252 @@ class ViveBasestationDevice(BasestationDevice):
 
     def restore_is_on(self, *, is_on: bool) -> None:
         """
-        Restore the last known on/off state after a restart.
+        Restore the last known on/off state after a restart, until the first poll reads it back.
 
-        V1 has no characteristic to read this back from the hardware, so _is_on is only ever our
-        own best guess from the last command we successfully sent - restoring it is strictly
-        better than the fresh-object default of False, which would otherwise make the switch show
-        "off" for a station that's actually on until the user happens to press it.
+        Better than the fresh-object default of False, which would show a station that's on as off
+        until then.
         """
         self._is_on = is_on
 
     async def turn_on(self) -> None:
         """Turn on the device."""
-        # Deliberately not early-returning when _is_on already looks True: unlike V2, that flag is
-        # never confirmed by an actual read, so trusting it as a hard gate risks silently
-        # swallowing a legitimate command whenever it's stale (e.g. right after a restart, before
-        # restore_is_on() runs, or if the station was toggled by something other than this
-        # integration). Sending an on/off command the station is already in is harmless.
-        if not self.pair_id:
-            return
-
-        try:
-            command = bytearray(20)
-            command[0:4] = V1Command.TURN_ON.value
-            command[4:8] = struct.pack("<I", int(self.pair_id))
-
-            sent = await self.async_ble_operation(
-                BLEOperationWrite(
-                    V1_PWR_CHARACTERISTIC, bytes(command), without_response=True, repeat_count=3, repeat_delay=1.0
-                )
-            )
-        except (ValueError, struct.error):
-            _LOGGER.exception("Invalid pair_id format for V1 basestation %s", self.mac)
-            return
-        except Exception:
-            _LOGGER.exception("Unexpected error turning on V1 basestation")
-            return
-
-        if not sent:
-            raise self._command_failed()
-        self._is_on = True
+        # Deliberately no early return when _is_on already looks True: it's up to a poll interval
+        # old, and SteamVR or another app may have switched the station since. Sending a command
+        # the station is already in is harmless.
+        await self._send_power_command(V1Command.TURN_ON)
 
     async def turn_off(self) -> None:
         """Turn off the device."""
         # See turn_on() for why this doesn't early-return based on _is_on.
+        await self._send_power_command(V1Command.TURN_OFF)
+
+    async def _send_power_command(self, command: V1Command) -> None:
+        """
+        Send a V1 power command and check that it arrived by reading it back.
+
+        Raises if it never reached the station, or if the station still reports a different last
+        command after V1_COMMAND_ATTEMPTS writes. The read-back only shows that the station received
+        the command: whether one with the wrong pair ID changes it is unknown, which is what
+        _check_pair_id_against_name() is for.
+        """
         if not self.pair_id:
+            _LOGGER.warning("Cannot send %s to V1 basestation %s: no pair ID configured", command.name, self.mac)
             return
 
         try:
-            command = bytearray(20)
-            command[0:4] = V1Command.TURN_OFF.value
-            command[4:8] = struct.pack("<I", int(self.pair_id))
-
-            sent = await self.async_ble_operation(
-                BLEOperationWrite(
-                    V1_PWR_CHARACTERISTIC, bytes(command), without_response=True, repeat_count=3, repeat_delay=1.0
-                )
-            )
+            payload = build_v1_command(command, int(self.pair_id))
         except (ValueError, struct.error):
             _LOGGER.exception("Invalid pair_id format for V1 basestation %s", self.mac)
             return
-        except Exception:
-            _LOGGER.exception("Unexpected error turning off V1 basestation")
-            return
 
+        self.last_command_result = None
+        sent = await self.async_ble_operation(
+            BLEOperationWrite(
+                V1_PWR_CHARACTERISTIC,
+                payload,
+                without_response=True,
+                settle_delay=V1_SETTLE_DELAY,
+                after_write=lambda client: self._verify_power_command(client, command, payload),
+            )
+        )
+        outcome: dict[str, Any] = self.last_command_result or {}
+        _LOGGER.debug(
+            "Sent %s to V1 basestation %s: %s", command.name, self.mac, outcome.get("result") if sent else "failed"
+        )
         if not sent:
             raise self._command_failed()
-        self._is_on = False
+
+        if outcome.get("result") == "mismatch":
+            _LOGGER.warning(
+                "V1 basestation %s did not take %s: after %d writes it still reports '%s' as its last command",
+                self.mac,
+                command.name,
+                outcome["writes"],
+                outcome["readback"],
+            )
+            raise self._command_failed()
+
+        # Confirmed already set the state from the read-back. Unverified means the write went through
+        # but couldn't be read back, so fall back to the command itself, as before the read-back existed.
+        if outcome.get("result") != "confirmed":
+            self._is_on = command is V1Command.TURN_ON
+
+    async def _verify_power_command(
+        self, client: BleakClientWithServiceCache, command: V1Command, payload: bytes
+    ) -> None:
+        """
+        Read a just-sent command back, rewriting it until the station reports it (BLEOperationWrite.after_write).
+
+        Leaves the outcome in last_command_result. A read that fails stops it as "unverified" rather
+        than failing the command, since the write itself went through.
+        """
+        expected = V1_COMMAND_READBACK[command]
+        result = "unverified"
+        readback = None
+        writes = 1
+        while True:
+            try:
+                value = bytes(await client.read_gatt_char(V1_PWR_CHARACTERISTIC))
+            except Exception as err:
+                _LOGGER.debug("Could not read %s back from V1 basestation %s: %s", command.name, self.mac, err)
+                result = "unverified"
+                break
+
+            readback = self._apply_readback(value, command.name)
+            if decode_v1_readback(value) == expected:
+                result = "confirmed"
+                break
+            result = "mismatch"
+            if writes >= V1_COMMAND_ATTEMPTS:
+                break
+
+            writes += 1
+            await client.write_gatt_char(V1_PWR_CHARACTERISTIC, payload, response=False)
+            await asyncio.sleep(V1_SETTLE_DELAY)
+
+        self.last_command_result = {
+            "at": time.time(),
+            "command": command.name,
+            "result": result,
+            "writes": writes,
+            "readback": readback,
+        }
+
+    def _check_pair_id_against_name(self) -> None:
+        """Warn once if the configured pair ID can't belong to this station (see v1_pair_id_matches_name)."""
+        if self._pair_id_checked or not self.pair_id:
+            return
+        service_info = bluetooth.async_last_service_info(self.hass, self.mac, connectable=False)
+        if service_info is None:
+            return
+
+        self._pair_id_checked = True
+        if v1_pair_id_matches_name(self.pair_id, service_info.name) is False:
+            _LOGGER.warning(
+                "The pair ID configured for V1 basestation %s (ending %s) does not match its Bluetooth "
+                "name '%s', which ends in the last 4 characters of its real ID. The station will ignore "
+                "on/off commands. Remove and re-add it with the ID printed on its back",
+                self.mac,
+                f"{self.pair_id:08X}"[-4:],
+                service_info.name,
+            )
+
+    def _warn_if_only_passively_seen(self) -> None:
+        """
+        Warn once if the station is only heard by scanners that can't connect to it.
+
+        get_ble_device() only returns a device behind a connectable adapter or proxy. A station
+        heard only by passive scanners (an ESPHome proxy without `active: true`, a Shelly gateway,
+        ...) still shows up in HA's Bluetooth pages, so it looks reachable while no command can
+        ever reach it. _set_available() logs nothing here either: the entry starts out
+        unavailable, so there is no transition. A tester in #4 hit exactly this with no log output.
+        """
+        if self._passive_only_warned:
+            return
+        passive_scanners = [
+            scanner_device.scanner.name
+            for scanner_device in bluetooth.async_scanner_devices_by_address(self.hass, self.mac, connectable=False)
+        ]
+        if not passive_scanners:
+            return
+
+        self._passive_only_warned = True
+        _LOGGER.warning(
+            "V1 basestation %s is only seen by Bluetooth scanners that cannot connect to it (%s), so it "
+            "cannot be switched. It needs a connectable Bluetooth adapter or an ESPHome Bluetooth proxy "
+            "with `active: true` in range",
+            self.mac,
+            ", ".join(passive_scanners),
+        )
 
     async def update(self) -> None:
-        """Update the device state."""
-        # V1 has no readable state characteristic, so advertisement visibility is the only signal
-        # available here - this never performs an actual BLE operation, unlike V2's update(), so
-        # unlike V2 it can't self-heal by simply succeeding on the next poll. Once
-        # _record_connection_failure has marked us unavailable, only give it another chance after
-        # UNAVAILABLE_RETRY_COOLDOWN has passed since it went unavailable, rather than requiring a
-        # user to happen to send a command that succeeds - otherwise a station that came back into
-        # range would stay marked unavailable indefinitely. Not since the last failure: info reads
-        # keep failing meanwhile, and retried more often than the cooldown they would hold it off
-        # for good.
-        try:
-            ble_device = self.get_ble_device()
-            if ble_device is None:
-                self._set_available("no longer advertising to any Bluetooth adapter or proxy", available=False)
-                return
+        """Read the last command the station received, the closest V1 has to a state (see decode_v1_readback)."""
+        self._check_pair_id_against_name()
 
-            if self._consecutive_failures >= UNAVAILABLE_AFTER_CONSECUTIVE_FAILURES:
-                since = self._unavailable_since
-                if since is not None and time.monotonic() - since < UNAVAILABLE_RETRY_COOLDOWN:
-                    return
-                self._consecutive_failures = 0
+        ble_device = self.get_ble_device()
+        if ble_device is None:
+            # As in ValveBasestationDevice.update(): availability otherwise comes from the read.
+            self._warn_if_only_passively_seen()
+            self._set_available("no longer advertising to any Bluetooth adapter or proxy", available=False)
+            return
 
-            self._set_available("advertising", available=True)
-        except Exception:
-            _LOGGER.exception("Error updating V1 basestation availability")
-            self._set_available("error while checking advertisement visibility", available=False)
+        value = await self.async_ble_operation(BLEOperationRead(V1_PWR_CHARACTERISTIC))
+        if value:
+            self._apply_readback(bytes(value), "poll")
+
+    def _apply_readback(self, value: bytes, source: str) -> str:
+        """
+        Take a read of the power characteristic as the station's state, returning it as hex.
+
+        "restarted" counts as on: a V1 station comes up on when it gets power (assumed, not confirmed
+        in #4). An unknown value, e.g. a command another app sent with different bytes, leaves the
+        state alone. source is "poll" or the command that was just sent.
+        """
+        meaning = decode_v1_readback(value)
+        hex_bytes = [f"{b:02x}" for b in value]
+        # Diagnostics get posted publicly. The read-back has never contained the pair ID, but mask it
+        # in case some firmware echoes the whole command.
+        if self.pair_id and value[4:8] == struct.pack("<I", self.pair_id):
+            hex_bytes[4:8] = ["xx"] * 4
+        hex_value = " ".join(hex_bytes)
+        entry = {"at": time.time(), "source": source, "value": hex_value, "meaning": meaning}
+        changed = self.last_readback is None or self.last_readback["value"] != hex_value
+        self.last_readback = entry
+        if changed:
+            self.readback_changes.append(entry)
+            _LOGGER.debug(
+                "V1 basestation %s power characteristic (%s): %s (%s)", self.mac, source, entry["value"], meaning
+            )
+
+        if meaning != "unknown":
+            is_on = meaning != "off"
+            if source == "poll" and is_on != self._is_on:
+                _LOGGER.debug(
+                    "V1 basestation %s %s outside Home Assistant",
+                    self.mac,
+                    "restarted" if meaning == "restarted" else f"was switched {meaning}",
+                )
+            self._is_on = is_on
+        return hex_value
 
     async def _read_specific_info(
-        self, _client: BleakClientWithServiceCache, info: dict[BaseStationDeviceInfoKey, Any]
+        self, client: BleakClientWithServiceCache, info: dict[BaseStationDeviceInfoKey, Any]
     ) -> bool:
+        self._record_gatt_services(client)
         if self.pair_id:
             info["pair_id"] = f"0x{self.pair_id:08X}"
             return True
         return False
+
+    def _record_gatt_services(self, client: BleakClientWithServiceCache) -> None:
+        """Keep the station's GATT layout for diagnostics, warning once if the power characteristic is missing."""
+        try:
+            services: list[dict[str, Any]] = [
+                {
+                    "uuid": service.uuid,
+                    "characteristics": [
+                        {"uuid": char.uuid, "properties": list(char.properties)} for char in service.characteristics
+                    ],
+                }
+                for service in client.services
+            ]
+        except Exception as err:
+            _LOGGER.debug("Could not list GATT services of V1 basestation %s: %s", self.mac, err)
+            return
+
+        first_capture = self.gatt_services is None
+        self.gatt_services = services
+        has_power_char = any(
+            char["uuid"].lower() == V1_PWR_CHARACTERISTIC for service in services for char in service["characteristics"]
+        )
+        if first_capture and not has_power_char:
+            _LOGGER.warning(
+                "V1 basestation %s does not expose the power characteristic %s; on/off commands cannot work. "
+                "Please attach this device's diagnostics to "
+                "https://github.com/MineTech13/homeassistant-basestation/issues/4",
+                self.mac,
+                V1_PWR_CHARACTERISTIC,
+            )
 
 
 def get_basestation_device(

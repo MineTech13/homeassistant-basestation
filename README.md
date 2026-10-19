@@ -5,7 +5,7 @@
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.12+-blue.svg?style=for-the-badge)](https://home-assistant.io)
 [![License](https://img.shields.io/github/license/MineTech13/homeassistant-basestation?style=for-the-badge)](LICENSE)
 
-A comprehensive Home Assistant integration for managing **Valve Index® Base Stations (V2)** and **HTC Vive Base Stations (V1)** ([UNTESTED](https://github.com/MineTech13/homeassistant-basestation/issues/4)) through Bluetooth Low Energy (BLE). Control power states, monitor device information, and automate your VR setup with ease.
+A comprehensive Home Assistant integration for managing **Valve Index® Base Stations (V2)** and **HTC Vive Base Stations (V1)** through Bluetooth Low Energy (BLE). Control power states, monitor device information, and automate your VR setup with ease.
 
 ---
 
@@ -13,13 +13,7 @@ A comprehensive Home Assistant integration for managing **Valve Index® Base Sta
 
 ### 🎮 **Universal VR Lighthouse Support**
 - **Valve Index Base Stations (V2)** - Full feature support
-- **HTC Vive Base Stations (V1)** - UNTESTED/WIP, see [#4](https://github.com/MineTech13/homeassistant-basestation/issues/4)
-
-> **V1 test builds:** improved V1 support is being tested in separate pre-releases named `2.2.0-v1-test.N`
-> ([releases](https://github.com/MineTech13/homeassistant-basestation/releases), discussion in
-> [#4](https://github.com/MineTech13/homeassistant-basestation/issues/4)). 2.1.0 doesn't contain those changes, so if you
-> have V1 stations, use the newest `v1-test` build. In HACS: the integration's ⋮ menu → **Redownload**, then pick the
-> version.
+- **HTC Vive Base Stations (V1)** - On/off, confirmed working by users (see [#4](https://github.com/MineTech13/homeassistant-basestation/issues/4)). Needs the station's pair ID, see below
 
 ### 🔄 **Advanced Power Management**
 - **Power Control** - Turn base stations on/off remotely
@@ -114,6 +108,23 @@ scan on
 - **Android**: Use "BLE Scanner" or "nrf Connect" app from Play Store
 - **Windows**: Use "Microsoft Bluetooth LE Explorer" from Windows Store
 - **SteamVR**: Check device serial numbers in SteamVR settings
+
+### V1 (HTC Vive) Pair ID
+
+V1 base stations need their **pair ID** to accept on/off commands: the 8-character ID printed on the back of the
+station (sometimes called BSID), e.g. `1A2B3C4D`. Its last 4 characters also end the station's Bluetooth name
+(`HTC BS …`), which setup uses to reject a mistyped ID. With a wrong ID the station silently ignores commands.
+
+The station also needs a Bluetooth adapter or proxy in range that can **connect** to it: a local adapter or
+an ESPHome Bluetooth proxy with `active: true`. Passive scanners (e.g. Shelly gateways, ESPHome proxies without
+`active: true`) still list the station in Home Assistant's Bluetooth pages, but can't send it anything. In that case
+the switch stays unavailable and the log shows a warning naming the scanners that see it.
+
+V1 stations can't report whether they are actually on. What they do report is the last on/off command they received,
+and that is what the switch shows. Switching a station with SteamVR or another app shows up after the next poll
+(default every 60 s). After a station lost power it shows as on, assuming it came back on by itself. If a
+command doesn't show up in that read-back, the integration sends it again, and reports an error if it still doesn't
+arrive.
 
 ---
 
@@ -212,7 +223,7 @@ logger:
 Access advanced settings via **Settings** → **Devices & Services** → **VR Basestation** → **Configure**:
 
 - **Device Name** - Custom friendly name
-- **State Update Interval** - How often the power state is read (default 60 s, V2 only)
+- **State Update Interval** - How often the power state is read (default 60 s)
 - **Fast Polling Interval** - Faster state reads while a station boots, capped at 2 minutes (default 5 s, V2 only)
 - **Device Info Scan Interval** - How often firmware, model etc. are read (default 1800 s)
 - **Connection Timeout** - How long to wait for a Bluetooth connection (default 20 s, minimum 10 s)
@@ -288,6 +299,7 @@ Transform your VR setup with smart automations:
 
 ### Technical References
 - **[jeroen1602/lighthouse_pm](https://github.com/jeroen1602/lighthouse_pm)** (GPLv3) - BLE protocol reference, including the V1 (Vive) pairing/power command structure
+- **[ShayBox/Lighthouse](https://github.com/ShayBox/Lighthouse)** (MIT) - Reference for V1 power control that users confirmed working (write timing, matching a station to its pair ID by Bluetooth name)
 - **[Home Assistant Community](https://community.home-assistant.io)** - Testing, feedback, and feature requests
 
 ---

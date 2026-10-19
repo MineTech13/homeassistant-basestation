@@ -50,9 +50,14 @@ interval and logs one warning.
 
 ## V1 (HTC Vive) stations
 
-V1 support is still being tested, see [#4](https://github.com/MineTech13/homeassistant-basestation/issues/4). The
-fixes so far are in the `2.2.0-v1-test.N` pre-releases, not in 2.1.0.
-V1 stations have no readable power state, so the switch shows the last command sent.
+V1 stations can't report whether they are actually on, only the last on/off command they received. The switch shows
+that, so:
+- Switching with SteamVR or another app shows up after the next poll, as long as that app sends the same commands.
+  Anything else is ignored and the switch keeps its state.
+- After a station lost power it shows as on, which assumes the station came back on by itself.
+- A wrong pair ID can't be detected this way. Setup rejects an ID that doesn't match the station's Bluetooth name.
+
+Testing and background: [#4](https://github.com/MineTech13/homeassistant-basestation/issues/4).
 
 ## Reporting a problem
 

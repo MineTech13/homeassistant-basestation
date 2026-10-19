@@ -19,7 +19,7 @@
       },
       "pair_id": {
         "title": "ID associazione Vive Basestation",
-        "description": "Inserisci l'ID di associazione per la tua stazione base Vive \"{device_name}\". Questo è necessario per controllare le stazioni base V1. L'ID di associazione è in genere un valore esadecimale come '1A2B3C4D'.",
+        "description": "Inserisci l'ID di associazione della tua stazione base Vive \"{device_name}\". È l'ID di 8 caratteri stampato sul retro della stazione (a volte chiamato BSID), es. '1A2B3C4D'. I suoi ultimi 4 caratteri sono anche la parte finale del nome Bluetooth della stazione (\"HTC BS ...\"). Con un ID errato la stazione ignora i comandi di accensione/spegnimento senza alcun errore.",
         "data": {
           "pair_id": "ID associazione (esadecimale)"
         }
@@ -27,7 +27,8 @@
     },
     "error": {
       "invalid_mac": "Formato indirizzo MAC non valido. Usa un formato come AA:BB:CC:DD:EE:FF",
-      "invalid_pair_id": "Formato ID associazione non valido. Inserisci un valore esadecimale valido (es. 1A2B3C4D)",
+      "invalid_pair_id": "ID associazione non valido. Inserisci l'ID esadecimale di 8 caratteri riportato sul retro della stazione (es. 1A2B3C4D)",
+      "pair_id_mismatch": "Questo ID non appartiene a questa stazione base: i suoi ultimi 4 caratteri devono corrispondere alla parte finale del nome Bluetooth della stazione (\"HTC BS ...\"). Controlla l'ID sul retro della stazione",
       "invalid_data": "Dati forniti non validi",
       "unknown": "Si è verificato un errore imprevisto"
     },
@@ -51,7 +52,7 @@
         "data_description": {
           "name": "Nome personalizzato per questo dispositivo stazione base",
           "info_scan_interval": "Con quale frequenza leggere le informazioni del dispositivo come firmware e modello (minimo 300 secondi). Lasciare vuoto per utilizzare il valore predefinito ({default_info_scan_interval} secondi).",
-          "power_state_scan_interval": "Con quale frequenza aggiornare lo stato del dispositivo (minimo 1 secondo, solo stazioni base Valve). Lasciare vuoto per utilizzare il valore predefinito ({default_power_state_scan_interval} secondi).",
+          "power_state_scan_interval": "Con quale frequenza aggiornare lo stato del dispositivo (minimo 1 secondo). Lasciare vuoto per utilizzare il valore predefinito ({default_power_state_scan_interval} secondi).",
           "fast_polling_interval": "Con quale frequenza aggiornare lo stato del dispositivo durante la sequenza di avvio (minimo 1 secondo, solo stazioni base Valve). Lasciare vuoto per utilizzare il valore predefinito ({default_fast_polling_interval} secondi).",
           "connection_timeout": "Tempo massimo di attesa per le connessioni Bluetooth (minimo 10 secondi). Lasciare vuoto per utilizzare il valore predefinito ({default_connection_timeout} secondi)."
         }
