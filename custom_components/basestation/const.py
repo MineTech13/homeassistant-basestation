@@ -52,6 +52,12 @@ class BasestationPowerState(IntEnum):
     ON = 0x0B
 
 
+# On its way from standby or sleep to ON. Polled at fast_polling_interval and shown as on.
+BOOTING_STATES = frozenset(
+    {BasestationPowerState.STARTING_UP, BasestationPowerState.BOOTING_1, BasestationPowerState.BOOTING_2}
+)
+
+
 class V1Command(bytes, Enum):
     """Command prefixes for Vive Basestations (V1)."""
 

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, cast
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .const import DOMAIN, MAX_FAST_POLLING_DURATION, BasestationPowerState
+from .const import BOOTING_STATES, DOMAIN, MAX_FAST_POLLING_DURATION
 from .device import CONNECT_TIMEOUT_COOLDOWN
 
 if TYPE_CHECKING:
@@ -82,12 +82,6 @@ class BasestationCoordinator(DataUpdateCoordinator):
 
     def _adjust_poll_interval(self) -> None:
         """Poll at fast_interval while the station is booting, within MAX_FAST_POLLING_DURATION."""
-        booting_states = (
-            BasestationPowerState.STARTING_UP,
-            BasestationPowerState.BOOTING_1,
-            BasestationPowerState.BOOTING_2,
-        )
-
         # If last_power_state is a booting value but hasn't been confirmed by a read recently,
         # the device has stopped responding rather than actually still booting - back off to
         # the normal interval instead of polling at fast_interval forever. "Recently" is scaled
@@ -95,7 +89,7 @@ class BasestationCoordinator(DataUpdateCoordinator):
         # configured.
         state_age = self.device.last_power_state_age
         is_state_fresh = state_age is not None and state_age < (self.fast_interval.total_seconds() * 2)
-        is_booting = self.device.last_power_state in booting_states and is_state_fresh
+        is_booting = self.device.last_power_state in BOOTING_STATES and is_state_fresh
 
         # Freshness can't catch a station that keeps *answering* STARTING_UP: every fast poll
         # re-confirms it. Cap each boot episode instead, so a stuck station drops back to the

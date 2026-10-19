@@ -24,6 +24,7 @@ from homeassistant.helpers.device_registry import CONNECTION_BLUETOOTH, DeviceIn
 
 from .connection_log import ConnectionLog, Outcome, Phase
 from .const import (
+    BOOTING_STATES,
     DEFAULT_CONNECTION_TIMEOUT,
     DEFAULT_INFO_SCAN_INTERVAL,
     DEVICE_TYPE_V1,
@@ -1225,12 +1226,7 @@ class ValveBasestationDevice(BasestationDevice):
             current_time = time.time()
 
             if self._target_power_state is not None and current_time < self._target_state_expires:
-                active_states = (
-                    BasestationPowerState.STARTING_UP,
-                    BasestationPowerState.BOOTING_1,
-                    BasestationPowerState.BOOTING_2,
-                    BasestationPowerState.ON,
-                )
+                active_states = BOOTING_STATES | {BasestationPowerState.ON}
 
                 # Wenn der angestrebte Status oder ein logischer Folgestatus erreicht wurde
                 if new_state == self._target_power_state or (
