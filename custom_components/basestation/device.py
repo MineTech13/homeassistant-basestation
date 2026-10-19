@@ -1500,18 +1500,21 @@ class ViveBasestationDevice(BasestationDevice):
         if self._pair_id_checked or not self.pair_id:
             return
         service_info = bluetooth.async_last_service_info(self.hass, self.mac, connectable=False)
-        if service_info is None:
+        name = service_info.name if service_info else None
+        # Without a scan response the name is just the address, which says nothing; try again next poll.
+        matches = v1_pair_id_matches_name(self.pair_id, name)
+        if matches is None:
             return
 
         self._pair_id_checked = True
-        if v1_pair_id_matches_name(self.pair_id, service_info.name) is False:
+        if not matches:
             _LOGGER.warning(
                 "The pair ID configured for V1 basestation %s (ending %s) does not match its Bluetooth "
                 "name '%s', which ends in the last 4 characters of its real ID. The station will ignore "
                 "on/off commands. Remove and re-add it with the ID printed on its back",
                 self.mac,
                 f"{self.pair_id:08X}"[-4:],
-                service_info.name,
+                name,
             )
 
     def _warn_if_only_passively_seen(self) -> None:
