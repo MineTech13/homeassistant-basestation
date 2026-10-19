@@ -20,10 +20,11 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
-# How often to retry the info read until it has succeeded once. A failed first read (often a
+# How soon to retry the info read until it has succeeded once. A failed first read (often a
 # connect timeout right after an HA restart) would otherwise leave the info sensors unknown for a
 # whole info_scan_interval. Just past the connect cooldown, so the retry isn't skipped by the same
-# cooldown that the failed read started.
+# cooldown that the failed read started. Doubled after each try, up to info_scan_interval, so a
+# station whose info never arrives costs a few extra reads rather than one every few minutes.
 INFO_RETRY_INTERVAL = datetime.timedelta(seconds=CONNECT_TIMEOUT_COOLDOWN + 30)
 
 
@@ -127,6 +128,7 @@ class BasestationInfoCoordinator(DataUpdateCoordinator):
         """Initialize the info coordinator."""
         self.device = device
         self.normal_interval = datetime.timedelta(seconds=scan_interval)
+        self._retry_interval = INFO_RETRY_INTERVAL
         super().__init__(
             hass,
             _LOGGER,
@@ -157,4 +159,8 @@ class BasestationInfoCoordinator(DataUpdateCoordinator):
         finally:
             # read_device_info() also returns without reading when the lock is busy or polls are in
             # their connect cooldown, so "has info yet" is the only reliable signal here.
-            self.update_interval = self.normal_interval if self.device.has_cached_info else INFO_RETRY_INTERVAL
+            if self.device.has_cached_info:
+                self.update_interval = self.normal_interval
+            else:
+                self.update_interval = min(self._retry_interval, self.normal_interval)
+                self._retry_interval *= 2

@@ -50,8 +50,9 @@ coordinator data as entities via `CoordinatorEntity`. `connection_log.py` (in-me
   (see the 2026-10-01 evening incident below).
 - `BasestationInfoCoordinator` — polls static info (firmware/model/hardware/manufacturer/channel/pair_id) at
   `info_scan_interval` (default 1800s). Falls back to cached info on timeout/error rather than failing the
-  update, so slow/flaky reads don't flap the info sensors. Until the first read has succeeded it retries every
-  `INFO_RETRY_INTERVAL` (connect cooldown + 30 s) instead, so a failed first read doesn't leave them `unknown`.
+  update, so slow/flaky reads don't flap the info sensors. Until the first read has succeeded it retries sooner, from
+  `INFO_RETRY_INTERVAL` (connect cooldown + 30 s) doubling up to `info_scan_interval`, so a failed first read doesn't
+  leave them `unknown`.
 
 **BLE connection management lives entirely in `device.py`**, in the `BasestationDevice` ABC (subclassed by
 `ValveBasestationDevice` / `ViveBasestationDevice`). All reads/writes go through `async_ble_operation()`,
