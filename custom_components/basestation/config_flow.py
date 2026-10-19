@@ -354,16 +354,17 @@ class BasestationOptionsFlow(config_entries.OptionsFlow):
                 CONF_CONNECTION_TIMEOUT,
                 description={"suggested_value": current_options.get(CONF_CONNECTION_TIMEOUT)},
             ): vol.All(vol.Coerce(int), vol.Range(min=MIN_CONNECTION_TIMEOUT, max=120)),
+            # V1 too: its poll connects to read the last command back, just like a V2 state read.
+            vol.Optional(
+                CONF_POWER_STATE_SCAN_INTERVAL,
+                description={"suggested_value": current_options.get(CONF_POWER_STATE_SCAN_INTERVAL)},
+            ): vol.All(vol.Coerce(int), vol.Range(min=1, max=300)),
         }
 
-        # Add V2-specific options
+        # Only V2 reports boot states to poll faster for.
         if device_type == DEVICE_TYPE_V2:
             schema_dict.update(
                 {
-                    vol.Optional(
-                        CONF_POWER_STATE_SCAN_INTERVAL,
-                        description={"suggested_value": current_options.get(CONF_POWER_STATE_SCAN_INTERVAL)},
-                    ): vol.All(vol.Coerce(int), vol.Range(min=1, max=300)),
                     vol.Optional(
                         CONF_FAST_POLLING_INTERVAL,
                         description={"suggested_value": current_options.get(CONF_FAST_POLLING_INTERVAL)},
