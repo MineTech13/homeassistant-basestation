@@ -8,18 +8,6 @@ From the review of [PR #18](https://github.com/MineTech13/homeassistant-basestat
 at `b890651` (2026-10-19). The five blockers from that review were fixed before 2.1.0 shipped. These are the rest,
 ordered by impact. Function names are given instead of line numbers, since those drift.
 
-### 7. Firmware and hardware version missing on the device page
-
-- **Where:** `device.py`, `device_info` property. Entities copy it in their `__init__`
-  (`_attr_device_info = device.device_info`).
-- **Problem:** The info read starts as a background task right before the platforms are set up, so `_info` is still
-  empty and `sw_version`/`hw_version` are `None`. Nothing updates the device registry later, and every reload writes
-  `None` again.
-- **Fix:** Leave `sw_version`/`hw_version` out of `DeviceInfo` while unknown (a key set to `None` overwrites the
-  registry). After a successful info read, update the device with
-  `dr.async_get(hass).async_update_device(device_id, sw_version=..., hw_version=...)`, e.g. from a listener on the
-  info coordinator in `__init__.py`.
-
 ### 8. Wrong outage duration in "available again after Xs"
 
 - **Where:** `device.py`, `_set_available()` computes the downtime from `_last_failure_time`.

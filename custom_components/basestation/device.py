@@ -293,16 +293,21 @@ class BasestationDevice(ABC):
     @property
     def device_info(self) -> DeviceInfo:
         """Return the device info for the registry."""
-        return DeviceInfo(
+        info = DeviceInfo(
             identifiers={(DOMAIN, self.mac)},
             connections={(CONNECTION_BLUETOOTH, self.mac)},
             name=self.device_name,
             manufacturer="Valve" if self.default_name == "Valve Basestation" else "HTC",
             model=self.default_name,
             serial_number=self.mac,
-            sw_version=self.get_info("firmware"),
-            hw_version=self.get_info("hardware"),
         )
+        # Only once read: a None here would overwrite the versions already in the registry on every
+        # reload. __init__.py updates them after each info read.
+        if firmware := self.get_info("firmware"):
+            info["sw_version"] = firmware
+        if hardware := self.get_info("hardware"):
+            info["hw_version"] = hardware
+        return info
 
     @property
     @abstractmethod
