@@ -1,0 +1,141 @@
+{
+  "config": {
+    "step": {
+      "bluetooth_confirm": {
+        "title": "VR Basestation ontdekt",
+        "description": "Een {device_type} is ontdekt:\n\n**{name}**\nMAC: {mac}\n\nWil je deze basestation toevoegen aan Home Assistant?",
+        "data": {
+          "name": "Aangepaste naam (Optioneel)"
+        }
+      },
+      "manual": {
+        "title": "VR Basestation toevoegen",
+        "description": "Voer het MAC-adres in en selecteer het type van je basestation. Je kunt het MAC-adres vinden met Bluetooth-scanners of in je VR-software.",
+        "data": {
+          "mac": "MAC-adres",
+          "name": "Aangepaste naam (Optioneel)",
+          "device_type": "Apparaattype"
+        }
+      },
+      "pair_id": {
+        "title": "Vive Basestation Koppelings-ID",
+        "description": "Voer de koppelings-ID in voor je Vive basestation \"{device_name}\". Dit is vereist om V1-basestations te bedienen. De koppelings-ID is meestal een hexadecimale waarde zoals '1A2B3C4D'.",
+        "data": {
+          "pair_id": "Koppelings-ID (hexadecimaal)"
+        }
+      }
+    },
+    "error": {
+      "invalid_mac": "Ongeldig MAC-adresformaat. Gebruik een formaat zoals AA:BB:CC:DD:EE:FF",
+      "invalid_pair_id": "Ongeldig formaat koppelings-ID. Voer een geldige hexadecimale waarde in (bijv. 1A2B3C4D)",
+      "invalid_data": "Ongeldige gegevens verstrekt",
+      "unknown": "Er is een onverwachte fout opgetreden"
+    },
+    "abort": {
+      "already_configured": "Deze basestation is al geconfigureerd",
+      "no_devices_found": "Geen VR basestation-apparaten gevonden"
+    }
+  },
+  "options": {
+    "step": {
+      "device_options": {
+        "title": "{device_name} configureren",
+        "description": "Configureer de instellingen voor je {device_type}. Pas scan-intervallen en time-outs aan.",
+        "data": {
+          "name": "Apparaatnaam",
+          "info_scan_interval": "Apparaatinfo scan-interval (seconden)",
+          "power_state_scan_interval": "Statusupdate interval (seconden)",
+          "fast_polling_interval": "Snel polling-interval tijdens opstarten (seconden)",
+          "connection_timeout": "Bluetooth verbindings-timeout (seconden)"
+        },
+        "data_description": {
+          "name": "Aangepaste naam voor dit basestation-apparaat",
+          "info_scan_interval": "Hoe vaak apparaatinformatie zoals firmware en model moet worden gelezen (minimaal 300 seconden). Laat leeg om de standaardwaarde te gebruiken ({default_info_scan_interval} seconden).",
+          "power_state_scan_interval": "Hoe vaak de apparaatstatus moet worden bijgewerkt (minimaal 1 seconde, alleen Valve basestations). Laat leeg om de standaardwaarde te gebruiken ({default_power_state_scan_interval} seconden).",
+          "fast_polling_interval": "Hoe vaak de apparaatstatus moet worden bijgewerkt tijdens de opstartsequentie (minimaal 1 seconde, alleen Valve basestations). Laat leeg om de standaardwaarde te gebruiken ({default_fast_polling_interval} seconden).",
+          "connection_timeout": "Maximale tijd om te wachten op Bluetooth-verbindingen (minimaal 10 seconden). Laat leeg om de standaardwaarde te gebruiken ({default_connection_timeout} seconden)."
+        }
+      }
+    },
+    "error": {
+      "scan_interval_too_low": "Scan-interval is te laag. Controleer de minimumwaarden.",
+      "timeout_too_low": "Verbindings-timeout is te laag. Het minimum is 10 seconden.",
+      "invalid_data": "Ongeldige configuratiegegevens verstrekt",
+      "unknown": "Er is een onverwachte fout opgetreden bij het opslaan van opties"
+    }
+  },
+  "entity": {
+    "button": {
+      "identify": {
+        "name": "Identificeren"
+      }
+    },
+    "sensor": {
+      "firmware": {
+        "name": "Firmwareversie"
+      },
+      "model": {
+        "name": "Modelnummer"
+      },
+      "hardware": {
+        "name": "Hardwareversie"
+      },
+      "manufacturer": {
+        "name": "Fabrikant"
+      },
+      "channel": {
+        "name": "Kanaal"
+      },
+      "pair_id": {
+        "name": "Koppelings-ID"
+      },
+      "power_state": {
+        "name": "Stroomstatus"
+      },
+      "connection_failures": {
+        "name": "Verbindingsfouten"
+      },
+      "abandoned_connects": {
+        "name": "Afgebroken verbindingspogingen"
+      },
+      "stranded_slots": {
+        "name": "Vermoedelijk geblokkeerde proxy-slots"
+      },
+      "out_of_slots_errors": {
+        "name": "Fouten door gebrek aan verbindingsslots"
+      },
+      "last_connection_error": {
+        "name": "Laatste verbindingsfout"
+      },
+      "last_successful_connection": {
+        "name": "Laatste geslaagde verbinding"
+      }
+    },
+    "switch": {
+      "power": {
+        "name": "Stroom"
+      },
+      "standby": {
+        "name": "Stand-by modus"
+      }
+    }
+  },
+  "exceptions": {
+    "command_failed": {
+      "message": "Kon de opdracht niet naar {name} sturen. Het basestation reageerde niet via Bluetooth."
+    },
+    "v2_only": {
+      "message": "{name} is een Vive basestation (V1). Deze actie werkt alleen met Valve Index basestations (V2)."
+    }
+  },
+  "services": {
+    "identify": {
+      "name": "Identificeren",
+      "description": "Laat de LED van een Valve Index basestation (V2) knipperen zodat je hem herkent."
+    },
+    "set_standby": {
+      "name": "Stand-by inschakelen",
+      "description": "Zet een Valve Index basestation (V2) in stand-by."
+    }
+  }
+}

@@ -2,7 +2,7 @@
 
 [![GitHub Release](https://img.shields.io/github/v/release/MineTech13/homeassistant-basestation?style=for-the-badge)](https://github.com/MineTech13/homeassistant-basestation/releases)
 [![HACS](https://img.shields.io/badge/HACS-Default-orange.svg?style=for-the-badge)](https://github.com/hacs/integration)
-[![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.2+-blue.svg?style=for-the-badge)](https://home-assistant.io)
+[![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2025.12+-blue.svg?style=for-the-badge)](https://home-assistant.io)
 [![License](https://img.shields.io/github/license/MineTech13/homeassistant-basestation?style=for-the-badge)](LICENSE)
 
 A comprehensive Home Assistant integration for managing **Valve Index® Base Stations (V2)** and **HTC Vive Base Stations (V1)** ([UNTESTED](https://github.com/MineTech13/homeassistant-basestation/issues/4)) through Bluetooth Low Energy (BLE). Control power states, monitor device information, and automate your VR setup with ease.
@@ -15,10 +15,16 @@ A comprehensive Home Assistant integration for managing **Valve Index® Base Sta
 - **Valve Index Base Stations (V2)** - Full feature support
 - **HTC Vive Base Stations (V1)** - UNTESTED/WIP, see [#4](https://github.com/MineTech13/homeassistant-basestation/issues/4)
 
+> **V1 test builds:** improved V1 support is being tested in separate pre-releases named `2.2.0-v1-test.N`
+> ([releases](https://github.com/MineTech13/homeassistant-basestation/releases), discussion in
+> [#4](https://github.com/MineTech13/homeassistant-basestation/issues/4)). 2.1.0 doesn't contain those changes, so if you
+> have V1 stations, use the newest `v1-test` build. In HACS: the integration's ⋮ menu → **Redownload**, then pick the
+> version.
+
 ### 🔄 **Advanced Power Management**
 - **Power Control** - Turn base stations on/off remotely
-- **Standby Mode** - Energy-efficient standby for V2 base stations
-- **Power State Monitoring** - Real-time status tracking
+- **Standby Mode** - Turns off lasers while keeping motors spinning for short VR breaks, reducing motor wear from excessive spin-ups (V2 only)
+- **Power State Monitoring** - Regular polling-based status tracking (default 60s)
 - **Identify Function** - Blink LEDs to locate specific base stations
 
 ### 🛠️ **Modern Integration Features**
@@ -28,7 +34,7 @@ A comprehensive Home Assistant integration for managing **Valve Index® Base Sta
 - **Multiple Entity Types** - Switches, sensors, and buttons for comprehensive control
 
 ### ⚙️ **Professional Features**
-- **Connection Management** - Advanced BLE connection pooling and retry logic
+- **Connection Management** - Shared BLE connections, retry logic and automatic steering away from misbehaving Bluetooth proxies
 - **Configurable Timeouts** - User-adjustable connection and scan intervals
 - **Device Registry Integration** - Proper Home Assistant device management
 - **Translation Support** - Multi-language interface
@@ -117,7 +123,7 @@ Each base station creates multiple entities for comprehensive control:
 
 ### 🔘 **Switches**
 - **Power Switch** - Main on/off control
-- **Standby Switch** *(V2 only)* - Energy-efficient standby mode
+- **Standby Switch** *(V2 only)* - Standby mode for short breaks (lasers off, motors spinning)
 
 ### 📈 **Sensors** *(Optional)*
 - **Firmware Version** - Current firmware information
@@ -131,6 +137,72 @@ Each base station creates multiple entities for comprehensive control:
 ### 🔵 **Buttons**
 - **Identify Button** *(V2 only)* - Blink LED for device identification
 
+### 🩺 **Connection Health Sensors** *(disabled by default)*
+
+Disabled out of the box, since they exist for tracking down Bluetooth problems rather than for
+everyday use. Enable them via **Settings** → **Devices & Services** → **VR Basestation** → the
+device → the entity → **Enable**, and Home Assistant will keep their history — so if a base station
+starts misbehaving later, you can see exactly when it began instead of relying on logs that have
+already rotated away.
+
+- **Connection failures** - Total failed connections and operations
+- **Abandoned connection attempts** - Connects that took too long to wait for (a rising count is an
+  early warning that the covering Bluetooth proxy is struggling)
+- **Suspected stranded proxy slots** - Connections that could not be confirmed as closed; the
+  number to watch if base stations become unavailable over time
+- **Out of connection slots errors** - Times the Bluetooth proxy reported it had no slots left
+- **Last connection error** - Most recent error, with its type
+- **Last successful connection** - When the base station was last reached
+
+---
+
+## 🩺 Troubleshooting
+
+### Common issues
+
+**Base stations not discovered:**
+- Make sure Bluetooth works in Home Assistant (**Settings** → **Devices & Services** → **Bluetooth**)
+- Check that the base stations are powered and in range of an adapter or proxy
+
+**Connection timeouts or a station that keeps going unavailable:**
+- Close SteamVR or other apps that talk to the base stations. A station only accepts one connection at a time
+- Check range: a closer adapter or an ESPHome Bluetooth proxy in the same room helps most
+- Increase the connection timeout in the device options
+
+### ESPHome Bluetooth proxies
+
+Most reported problems come from the proxy, not the base station:
+
+- Use `active: true` for the proxy. Passive scanners can see a station but can't connect to it
+- `wifi: power_save_mode: none` is recommended by ESPHome for Bluetooth proxies
+- Busy devices that also run a display or many other components can struggle as proxies. A dedicated ESP32 proxy works best
+- If a station disappears and only comes back after restarting a proxy, the proxy is still holding a connection to it.
+  Restart one proxy at a time to find out which one. The proxy's own log usually shows `OPEN_EVT in unexpected state`
+  around the time the station disappeared
+
+### Reporting a problem
+
+Known problems and workarounds are listed in [ISSUES.md](ISSUES.md). When you open an issue, please attach the diagnostics:
+
+1. Open the base station's device page (**Settings** → **Devices & Services** → **VR Basestation** → the device)
+2. Three-dot menu → **Download diagnostics**
+3. Attach the file to the issue
+
+Download them **before** reloading the integration or restarting Home Assistant or a proxy. A reload resets the
+counters and the connection history, which are the useful part. The file shows the recent connection history,
+error counters, whether a connection attempt is still running, and which Bluetooth adapters and proxies can see
+the station. The MAC address and pair ID are removed automatically (only the last characters of the MAC are kept).
+
+If you can, also add the Home Assistant log from around the time it happened. Availability changes, connection
+problems and anything that could leave a proxy connection slot occupied are logged as warnings, so no extra
+logging setup is needed. For more detail, enable debug logging:
+
+```yaml
+logger:
+  logs:
+    custom_components.basestation: debug
+```
+
 ---
 
 ## 🔧 Advanced Configuration
@@ -140,10 +212,12 @@ Each base station creates multiple entities for comprehensive control:
 Access advanced settings via **Settings** → **Devices & Services** → **VR Basestation** → **Configure**:
 
 - **Device Name** - Custom friendly name
-- **Scan Intervals** - Adjust update frequencies
-- **Connection Timeout** - BLE connection timeout
-- **Sensor Control** - Enable/disable specific sensors
-- **Power State Monitoring** - Control detailed state tracking
+- **State Update Interval** - How often the power state is read (default 60 s, V2 only)
+- **Fast Polling Interval** - Faster state reads while a station boots, capped at 2 minutes (default 5 s, V2 only)
+- **Device Info Scan Interval** - How often firmware, model etc. are read (default 1800 s)
+- **Connection Timeout** - How long to wait for a Bluetooth connection (default 20 s, minimum 10 s)
+
+Leave a field blank to use the default.
 
 ### Automation Integration
 
@@ -185,22 +259,6 @@ Create groups for easy control:
 2. **Create Helper** → **Group**
 3. Add all base station switches
 4. Control all base stations with one entity
-
----
-
-## 🛠️ Troubleshooting
-
-### Common Issues
-
-**Base stations not discovered:**
-- Ensure Bluetooth is enabled and working
-- Check base stations are powered and not in sleep mode
-- Verify Home Assistant has Bluetooth access
-
-**Connection timeouts:**
-- Increase connection timeout in device options
-- Check Bluetooth adapter range and interference
-- Ensure base stations aren't in use by SteamVR
 
 ---
 
@@ -255,6 +313,7 @@ Copyright (C) 2026 MineTech13 and contributors.
 
 - **[GitHub Repository](https://github.com/MineTech13/homeassistant-basestation)**
 - **[Issue Tracker](https://github.com/MineTech13/homeassistant-basestation/issues)**
+- **[Known Issues](ISSUES.md)**
 - **[Home Assistant Community](https://community.home-assistant.io)**
 - **[HACS](https://hacs.xyz)**
 

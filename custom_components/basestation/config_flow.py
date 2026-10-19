@@ -10,21 +10,24 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.const import CONF_MAC, CONF_NAME
 from homeassistant.core import callback
+from homeassistant.helpers.device_registry import format_mac
 
 from .const import (
     CONF_CONNECTION_TIMEOUT,
     CONF_DEVICE_TYPE,
-    CONF_ENABLE_INFO_SENSORS,
+    CONF_FAST_POLLING_INTERVAL,
     CONF_INFO_SCAN_INTERVAL,
     CONF_PAIR_ID,
     CONF_POWER_STATE_SCAN_INTERVAL,
     CONF_SETUP_METHOD,
     DEFAULT_CONNECTION_TIMEOUT,
+    DEFAULT_FAST_POLLING_INTERVAL,
     DEFAULT_INFO_SCAN_INTERVAL,
     DEFAULT_POWER_STATE_SCAN_INTERVAL,
     DEVICE_TYPE_V1,
     DEVICE_TYPE_V2,
     DOMAIN,
+    MIN_CONNECTION_TIMEOUT,
     SETUP_MANUAL,
     V1_NAME_PREFIX,
     V2_NAME_PREFIX,
@@ -36,15 +39,17 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
-# MAC address regex pattern (allows formats like XX:XX:XX:XX:XX:XX or XXXXXXXXXXXX)
-MAC_REGEX = r"^([0-9A-Fa-f]{2}[:-]?){5}([0-9A-Fa-f]{2})$"
 # Pair ID regex pattern (hexadecimal value)
 PAIR_ID_REGEX = r"^(0x)?[0-9A-Fa-f]{1,8}$"
 
+# Six hex pairs separated consistently by ':' or '-', or not at all: exactly the forms format_mac()
+# normalises. It returns anything else unchanged instead of failing, so it can't validate on its own.
+MAC_REGEX = r"^[0-9A-Fa-f]{2}([:-]?)[0-9A-Fa-f]{2}(?:\1[0-9A-Fa-f]{2}){4}$"
+
 # Constants for validation
 MIN_INFO_SCAN_INTERVAL = 300  # 5 minutes minimum
-MIN_CONNECTION_TIMEOUT = 5  # 5 seconds minimum
 MIN_STATE_SCAN_INTERVAL = 1  # 1 second minimum
+MIN_FAST_POLLING_INTERVAL = 1  # 1 second minimum
 
 
 class BasestationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -143,7 +148,6 @@ class BasestationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         # For V2 devices, create the entry directly
         title = user_provided_name if user_provided_name else f"Basestation {mac[-5:]}"
-
         return self.async_create_entry(
             title=title,
             data={
@@ -178,24 +182,18 @@ class BasestationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
 
         # Process the submitted form data
-        mac = user_input[CONF_MAC].upper()
-        mac = mac.replace("-", ":").replace(" ", "")
-
-        # If MAC is in format without colons, add them
-        if ":" not in mac and len(mac) == 12:  # noqa: PLR2004
-            mac = ":".join(mac[i : i + 2] for i in range(0, 12, 2))
-
+        raw_mac = user_input[CONF_MAC].strip()
         user_provided_name = user_input.get(CONF_NAME)
         device_type = user_input[CONF_DEVICE_TYPE]
 
         # Validate MAC address format
-        if not _validate_mac(mac):
+        if not re.match(MAC_REGEX, raw_mac):
             errors["base"] = "invalid_mac"
             return self.async_show_form(
                 step_id="manual",
                 data_schema=vol.Schema(
                     {
-                        vol.Required(CONF_MAC, default=mac): str,
+                        vol.Required(CONF_MAC, default=user_input[CONF_MAC]): str,
                         vol.Optional(CONF_NAME, default=user_provided_name): str,
                         vol.Required(CONF_DEVICE_TYPE, default=device_type): vol.In(
                             {
@@ -207,6 +205,8 @@ class BasestationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 ),
                 errors=errors,
             )
+
+        mac = format_mac(raw_mac).upper()
 
         # Use MAC address as the unique ID to prevent duplicates
         await self.async_set_unique_id(mac)
@@ -275,16 +275,10 @@ class BasestationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 },
             )
 
-        # Convert pair ID string to integer
+        # Convert pair ID string to integer. PAIR_ID_REGEX only accepts hex digits (with an
+        # optional "0x" prefix, which int() already understands), so this is always a hex parse.
         try:
-            if pair_id_str.startswith("0x"):
-                pair_id = int(pair_id_str, 16)
-            else:
-                # Try hex first, then decimal if that fails
-                try:
-                    pair_id = int(pair_id_str, 16)
-                except ValueError:
-                    pair_id = int(pair_id_str)
+            pair_id = int(pair_id_str, 16)
         except ValueError:
             errors[CONF_PAIR_ID] = "invalid_pair_id"
             return self.async_show_form(
@@ -329,43 +323,52 @@ class BasestationOptionsFlow(config_entries.OptionsFlow):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            # Validate scan intervals
-            if user_input.get(CONF_INFO_SCAN_INTERVAL, 0) < MIN_INFO_SCAN_INTERVAL:
+            # Fields are vol.Optional with no default (see schema_dict below), so a value only
+            # shows up here at all if the user actually entered one - a field they left blank to
+            # keep tracking the integration's default is genuinely absent, not "0" or some other
+            # sentinel. Some frontend widgets send an explicit None for a cleared field instead of
+            # omitting the key outright, so normalize that away first too.
+            user_input = {key: value for key, value in user_input.items() if value is not None}
+
+            if CONF_INFO_SCAN_INTERVAL in user_input and user_input[CONF_INFO_SCAN_INTERVAL] < MIN_INFO_SCAN_INTERVAL:
                 errors[CONF_INFO_SCAN_INTERVAL] = "scan_interval_too_low"
-
-            if user_input.get(CONF_POWER_STATE_SCAN_INTERVAL, 0) < MIN_STATE_SCAN_INTERVAL:
+            if (
+                CONF_POWER_STATE_SCAN_INTERVAL in user_input
+                and user_input[CONF_POWER_STATE_SCAN_INTERVAL] < MIN_STATE_SCAN_INTERVAL
+            ):
                 errors[CONF_POWER_STATE_SCAN_INTERVAL] = "scan_interval_too_low"
-
-            if user_input.get(CONF_CONNECTION_TIMEOUT, 0) < MIN_CONNECTION_TIMEOUT:
+            if (
+                CONF_FAST_POLLING_INTERVAL in user_input
+                and user_input[CONF_FAST_POLLING_INTERVAL] < MIN_FAST_POLLING_INTERVAL
+            ):
+                errors[CONF_FAST_POLLING_INTERVAL] = "scan_interval_too_low"
+            if CONF_CONNECTION_TIMEOUT in user_input and user_input[CONF_CONNECTION_TIMEOUT] < MIN_CONNECTION_TIMEOUT:
                 errors[CONF_CONNECTION_TIMEOUT] = "timeout_too_low"
 
             if not errors:
-                # Update the config entry with new options
                 return self.async_create_entry(title="", data=user_input)
 
-        # Get current options or set defaults
+        # Get current options
         current_options = self._config_entry.options
         device_type = self._config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_V2)
-        current_name = current_options.get(CONF_NAME, self._config_entry.data.get(CONF_NAME, ""))
 
-        # Build the schema based on device type
+        # vol.Optional + suggested_value (instead of vol.Required + default) so a field the user
+        # never customized renders blank, and - if left blank - is genuinely omitted from what
+        # gets saved rather than getting permanently pinned to whatever the current default
+        # happens to be. That's what lets a later release's default change actually reach an entry
+        # that never explicitly overrode that particular field, even if the user did customize
+        # some other field on this same form. current_options.get(key) is None for an
+        # unset/tracking-default field, which the frontend renders as an empty box rather than
+        # suggesting a value.
         schema_dict = {
-            vol.Optional(CONF_NAME, default=current_name, description="Custom device name"): str,
             vol.Optional(
                 CONF_INFO_SCAN_INTERVAL,
-                default=current_options.get(CONF_INFO_SCAN_INTERVAL, DEFAULT_INFO_SCAN_INTERVAL),
-                description="How often to scan for device info (seconds, minimum 300)",
+                description={"suggested_value": current_options.get(CONF_INFO_SCAN_INTERVAL)},
             ): vol.All(vol.Coerce(int), vol.Range(min=300, max=86400)),
             vol.Optional(
                 CONF_CONNECTION_TIMEOUT,
-                default=current_options.get(CONF_CONNECTION_TIMEOUT, DEFAULT_CONNECTION_TIMEOUT),
-                description="BLE connection timeout (seconds, minimum 5)",
-            ): vol.All(vol.Coerce(int), vol.Range(min=5, max=60)),
-            vol.Optional(
-                CONF_ENABLE_INFO_SENSORS,
-                default=current_options.get(CONF_ENABLE_INFO_SENSORS, True),
-                description="Enable device information sensors (firmware, model, etc.)",
-            ): bool,
+                description={"suggested_value": current_options.get(CONF_CONNECTION_TIMEOUT)},
+            ): vol.All(vol.Coerce(int), vol.Range(min=MIN_CONNECTION_TIMEOUT, max=120)),
         }
 
         # Add V2-specific options
@@ -374,9 +377,12 @@ class BasestationOptionsFlow(config_entries.OptionsFlow):
                 {
                     vol.Optional(
                         CONF_POWER_STATE_SCAN_INTERVAL,
-                        default=current_options.get(CONF_POWER_STATE_SCAN_INTERVAL, DEFAULT_POWER_STATE_SCAN_INTERVAL),
-                        description="How often to update device state (seconds, minimum 1)",
+                        description={"suggested_value": current_options.get(CONF_POWER_STATE_SCAN_INTERVAL)},
                     ): vol.All(vol.Coerce(int), vol.Range(min=1, max=300)),
+                    vol.Optional(
+                        CONF_FAST_POLLING_INTERVAL,
+                        description={"suggested_value": current_options.get(CONF_FAST_POLLING_INTERVAL)},
+                    ): vol.All(vol.Coerce(int), vol.Range(min=1, max=60)),
                 }
             )
 
@@ -384,13 +390,15 @@ class BasestationOptionsFlow(config_entries.OptionsFlow):
             step_id="device_options",
             data_schema=vol.Schema(schema_dict),
             errors=errors,
+            # These fill {tokens} in data_description too, not just the step description above -
+            # that's how the blank/default fields still show the user what value they'd actually
+            # get without it being baked into the field itself.
             description_placeholders={
                 "device_name": self._config_entry.title,
                 "device_type": "Valve Basestation (V2)" if device_type == DEVICE_TYPE_V2 else "Vive Basestation (V1)",
+                "default_info_scan_interval": str(DEFAULT_INFO_SCAN_INTERVAL),
+                "default_connection_timeout": str(DEFAULT_CONNECTION_TIMEOUT),
+                "default_power_state_scan_interval": str(DEFAULT_POWER_STATE_SCAN_INTERVAL),
+                "default_fast_polling_interval": str(DEFAULT_FAST_POLLING_INTERVAL),
             },
         )
-
-
-def _validate_mac(mac: str) -> bool:
-    """Validate MAC address format using regex."""
-    return bool(re.match(MAC_REGEX, mac))

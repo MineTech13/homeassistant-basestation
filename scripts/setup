@@ -4,4 +4,6 @@ set -e
 
 cd "$(dirname "$0")/.."
 
+sudo chown -R $(whoami) .
+
 pip install -e .

@@ -40,26 +40,26 @@
     "step": {
       "device_options": {
         "title": "Configurar {device_name}",
-        "description": "Configure los ajustes para su {device_type}. Ajuste los intervalos de escaneo, los tiempos de espera y habilite/deshabilite sensores específicos.",
+        "description": "Configure los ajustes para su {device_type}. Ajuste los intervalos de escaneo y los tiempos de espera.",
         "data": {
           "name": "Nombre del dispositivo",
           "info_scan_interval": "Intervalo de escaneo de info (segundos)",
           "power_state_scan_interval": "Intervalo de actualización de estado (segundos)",
-          "connection_timeout": "Tiempo de espera de conexión Bluetooth (segundos)",
-          "enable_info_sensors": "Habilitar sensores de información"
+          "fast_polling_interval": "Intervalo de sondeo rápido durante el arranque (segundos)",
+          "connection_timeout": "Tiempo de espera de conexión Bluetooth (segundos)"
         },
         "data_description": {
           "name": "Nombre personalizado para este dispositivo de estación base",
-          "info_scan_interval": "Con qué frecuencia leer la información del dispositivo como firmware y modelo (mínimo 300 segundos)",
-          "power_state_scan_interval": "Con qué frecuencia actualizar el estado del dispositivo: controla interruptores, botones y sensores (mínimo 1 segundo, solo estaciones base Valve)",
-          "connection_timeout": "Tiempo máximo de espera para conexiones Bluetooth (mínimo 5 segundos)",
-          "enable_info_sensors": "Mostrar sensores para firmware, modelo, hardware e información del fabricante"
+          "info_scan_interval": "Con qué frecuencia leer la información del dispositivo como firmware y modelo (mínimo 300 segundos). Déjelo en blanco para usar el valor predeterminado ({default_info_scan_interval} segundos).",
+          "power_state_scan_interval": "Con qué frecuencia actualizar el estado del dispositivo (mínimo 1 segundo, solo estaciones base Valve). Déjelo en blanco para usar el valor predeterminado ({default_power_state_scan_interval} segundos).",
+          "fast_polling_interval": "Con qué frecuencia actualizar el estado del dispositivo durante la secuencia de arranque (mínimo 1 segundo, solo estaciones base Valve). Déjelo en blanco para usar el valor predeterminado ({default_fast_polling_interval} segundos).",
+          "connection_timeout": "Tiempo máximo de espera para conexiones Bluetooth (mínimo 10 segundos). Déjelo en blanco para usar el valor predeterminado ({default_connection_timeout} segundos)."
         }
       }
     },
     "error": {
       "scan_interval_too_low": "El intervalo de escaneo es demasiado bajo. Verifique los valores mínimos.",
-      "timeout_too_low": "El tiempo de espera de conexión es demasiado bajo. El mínimo es 5 segundos.",
+      "timeout_too_low": "El tiempo de espera de conexión es demasiado bajo. El mínimo es 10 segundos.",
       "invalid_data": "Datos de configuración no válidos proporcionados",
       "unknown": "Ocurrió un error inesperado al guardar las opciones"
     }
@@ -91,6 +91,24 @@
       },
       "power_state": {
         "name": "Estado de energía"
+      },
+      "connection_failures": {
+        "name": "Fallos de conexión"
+      },
+      "abandoned_connects": {
+        "name": "Intentos de conexión abandonados"
+      },
+      "stranded_slots": {
+        "name": "Ranuras de proxy posiblemente bloqueadas"
+      },
+      "out_of_slots_errors": {
+        "name": "Errores por falta de ranuras de conexión"
+      },
+      "last_connection_error": {
+        "name": "Último error de conexión"
+      },
+      "last_successful_connection": {
+        "name": "Última conexión correcta"
       }
     },
     "switch": {
@@ -100,6 +118,24 @@
       "standby": {
         "name": "Modo de espera"
       }
+    }
+  },
+  "exceptions": {
+    "command_failed": {
+      "message": "No se pudo enviar el comando a {name}. La estación base no respondió por Bluetooth."
+    },
+    "v2_only": {
+      "message": "{name} es una estación base Vive (V1). Esta acción solo funciona con estaciones base Valve Index (V2)."
+    }
+  },
+  "services": {
+    "identify": {
+      "name": "Identificar",
+      "description": "Hace parpadear el LED de una estación base Valve Index (V2) para que pueda reconocerla."
+    },
+    "set_standby": {
+      "name": "Activar modo de espera",
+      "description": "Pone una estación base Valve Index (V2) en modo de espera."
     }
   }
 }

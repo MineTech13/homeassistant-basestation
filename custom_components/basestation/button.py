@@ -40,9 +40,9 @@ class BasestationIdentifyButton(CoordinatorEntity, ButtonEntity):
         self._device = device
         self._attr_unique_id = f"basestation_{device.mac}_identify"
         self._attr_has_entity_name = True
-        self._attr_name = "Identify"
+        self._attr_translation_key = "identify"
         self._attr_icon = "mdi:led-on"
-        self._attr_device_info = {"identifiers": {(DOMAIN, device.mac)}}
+        self._attr_device_info = device.device_info
 
     async def async_press(self) -> None:
         """Handle the button press."""

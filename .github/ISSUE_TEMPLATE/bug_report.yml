@@ -1,0 +1,64 @@
+name: Bug report
+description: Something doesn't work as expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please check [ISSUES.md](https://github.com/MineTech13/homeassistant-basestation/blob/main/ISSUES.md) first, your problem may already be known.
+  - type: input
+    id: version
+    attributes:
+      label: Integration version
+      description: Settings → Devices & services → VR Basestation, or HACS
+      placeholder: "2.1.0"
+    validations:
+      required: true
+  - type: input
+    id: ha_version
+    attributes:
+      label: Home Assistant version
+      placeholder: "2026.10.1"
+    validations:
+      required: true
+  - type: dropdown
+    id: station
+    attributes:
+      label: Base station type
+      options:
+        - Valve Index (V2)
+        - HTC Vive (V1)
+        - Both
+    validations:
+      required: true
+  - type: textarea
+    id: bluetooth
+    attributes:
+      label: Bluetooth setup
+      description: Local adapter and/or Bluetooth proxies (e.g. ESPHome on an ESP32, active or passive), and roughly where they are relative to the stations.
+      placeholder: "2 ESPHome proxies (ESP32, active: true), one in the same room"
+    validations:
+      required: true
+  - type: textarea
+    id: what_happened
+    attributes:
+      label: What happened
+      description: What you expected, what happened instead, and when it started.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: |
+        Device page → three-dot menu → Download diagnostics, then drag the file in here.
+        Please download them **before** reloading the integration or restarting Home Assistant or a proxy. That resets the history in the file.
+        The MAC address and pair ID are removed automatically.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Home Assistant log lines from around the time it happened, and ESPHome proxy logs if you have them.
+      render: text

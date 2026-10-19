@@ -8,15 +8,21 @@ from typing import TYPE_CHECKING, cast
 from homeassistant.const import CONF_MAC, CONF_NAME, Platform
 
 from .const import (
+    CONF_CONNECTION_TIMEOUT,
     CONF_DEVICE_TYPE,
+    CONF_FAST_POLLING_INTERVAL,
+    CONF_INFO_SCAN_INTERVAL,
     CONF_PAIR_ID,
     CONF_POWER_STATE_SCAN_INTERVAL,
+    DEFAULT_CONNECTION_TIMEOUT,
+    DEFAULT_FAST_POLLING_INTERVAL,
+    DEFAULT_INFO_SCAN_INTERVAL,
     DEFAULT_POWER_STATE_SCAN_INTERVAL,
     DOMAIN,
+    MIN_CONNECTION_TIMEOUT,
 )
-from .coordinator import BasestationCoordinator
+from .coordinator import BasestationCoordinator, BasestationInfoCoordinator
 from .device import BasestationDevice, get_basestation_device
-from .services import async_setup_services
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -38,30 +44,48 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Get scan interval from options or defaults
     scan_interval = entry.options.get(CONF_POWER_STATE_SCAN_INTERVAL, DEFAULT_POWER_STATE_SCAN_INTERVAL)
+    info_scan_interval = entry.options.get(CONF_INFO_SCAN_INTERVAL, DEFAULT_INFO_SCAN_INTERVAL)
+    fast_scan_interval = entry.options.get(CONF_FAST_POLLING_INTERVAL, DEFAULT_FAST_POLLING_INTERVAL)
 
     if mac:
+        # max() guards against entries created before MIN_CONNECTION_TIMEOUT was raised, which may
+        # still have a lower value stored from before the options form re-validates it.
+        connection_timeout = max(
+            entry.options.get(CONF_CONNECTION_TIMEOUT, DEFAULT_CONNECTION_TIMEOUT), MIN_CONNECTION_TIMEOUT
+        )
         device = get_basestation_device(
             hass,
             mac,
             name=name,
             device_type=device_type,
             pair_id=pair_id,
+            connection_timeout=connection_timeout,
+            info_scan_interval=info_scan_interval,
         )
 
-        # Setup Coordinator
-        coordinator = BasestationCoordinator(hass, device, scan_interval)
+        # Setup Coordinators
+        coordinator = BasestationCoordinator(hass, device, scan_interval, fast_scan_interval)
+        info_coordinator = BasestationInfoCoordinator(hass, device, info_scan_interval)
 
         # Initial refresh
         await coordinator.async_config_entry_first_refresh()
 
-        # Store device and coordinator
-        hass.data[DOMAIN][entry.entry_id] = {"device": device, "coordinator": coordinator}
+        # Info-Refresh not blocking as background task
+        entry.async_create_background_task(
+            hass, info_coordinator.async_request_refresh(), name=f"basestation_info_init_{device.mac}"
+        )
+
+        # Store device and coordinators
+        hass.data[DOMAIN][entry.entry_id] = {
+            "device": device,
+            "coordinator": coordinator,
+            "info_coordinator": info_coordinator,
+        }
 
     # Register update listener
     entry.async_on_unload(entry.add_update_listener(async_update_options))
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    await async_setup_services(hass)
 
     return True
 

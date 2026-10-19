@@ -1,5 +1,7 @@
 """Constants for the VR Basestation integration."""
 
+from enum import Enum, IntEnum
+
 DOMAIN = "basestation"
 
 # Device types
@@ -7,16 +9,11 @@ DEVICE_TYPE_V1 = "vive"
 DEVICE_TYPE_V2 = "valve"
 
 # Valve Index Basestation (V2) constants
-V2_PWR_SERVICE = "00001523-1212-efde-1523-785feabcd124"
 V2_PWR_CHARACTERISTIC = "00001525-1212-EFDE-1523-785FEABCD124"
 V2_CHANNEL_CHARACTERISTIC = "00001524-1212-EFDE-1523-785FEABCD124"
 V2_IDENTIFY_CHARACTERISTIC = "00008421-1212-EFDE-1523-785FEABCD124"
-V2_PWR_ON = b"\x01"
-V2_PWR_STANDBY = b"\x02"
-V2_PWR_SLEEP = b"\x00"
 
 # Vive Basestation (V1) constants
-V1_PWR_SERVICE = "0000cb00-0000-1000-8000-00805f9b34fb"
 V1_PWR_CHARACTERISTIC = "0000cb01-0000-1000-8000-00805f9b34fb"
 
 # Standard BLE characteristics for device information
@@ -33,8 +30,8 @@ CONF_SETUP_METHOD = "setup_method"
 # Options flow configuration keys (current)
 CONF_INFO_SCAN_INTERVAL = "info_scan_interval"
 CONF_POWER_STATE_SCAN_INTERVAL = "power_state_scan_interval"
+CONF_FAST_POLLING_INTERVAL = "fast_polling_interval"
 CONF_CONNECTION_TIMEOUT = "connection_timeout"
-CONF_ENABLE_INFO_SENSORS = "enable_info_sensors"
 
 # Setup methods - simplified for device-based architecture
 SETUP_MANUAL = "manual"
@@ -43,30 +40,56 @@ SETUP_MANUAL = "manual"
 V1_NAME_PREFIX = "HTC BS"
 V2_NAME_PREFIX = "LHB-"
 
+
+class BasestationPowerState(IntEnum):
+    """Power states for Valve Basestations."""
+
+    SLEEP = 0x00
+    STARTING_UP = 0x01
+    STANDBY = 0x02
+    BOOTING_1 = 0x08
+    BOOTING_2 = 0x09
+    ON = 0x0B
+
+
+class V1Command(bytes, Enum):
+    """Command prefixes for Vive Basestations (V1)."""
+
+    TURN_ON = b"\x12\x00\x00\x00"
+    TURN_OFF = b"\x12\x02\x00\x01"
+
+
+class V2Command(bytes, Enum):
+    """Specific commands for Valve Basestations (V2)."""
+
+    IDENTIFY = b"\x00"
+
+
 # Power state descriptions for V2 basestations
-V2_STATE_DESCRIPTIONS = {
-    0x00: "Sleep",
-    0x01: "Starting Up",
-    0x02: "Standby",
-    0x08: "Booting",
-    0x09: "Booting",
-    0x0B: "On",
+V2_STATE_DESCRIPTIONS: dict[int, str] = {
+    BasestationPowerState.SLEEP: "Sleep",
+    BasestationPowerState.STARTING_UP: "Starting Up",
+    BasestationPowerState.STANDBY: "Standby",
+    BasestationPowerState.BOOTING_1: "Booting",
+    BasestationPowerState.BOOTING_2: "Booting",
+    BasestationPowerState.ON: "On",
 }
 
 # Default scan intervals (in seconds)
 DEFAULT_INFO_SCAN_INTERVAL = 1800  # 30 minutes - for static info sensors
 DEFAULT_POWER_STATE_SCAN_INTERVAL = 60  # 60 seconds - for power state sensor (controls ALL state freshness)
-DEFAULT_CONNECTION_TIMEOUT = 10  # 10 seconds - BLE connection timeout
+DEFAULT_FAST_POLLING_INTERVAL = 5  # 5 seconds - for fast polling during boot
+# Hard cap on how long one boot episode may poll at the fast interval. A real boot reaches ON within
+# seconds, but a V2 station woken from standby can keep reporting STARTING_UP for hours - observed
+# 2026-10-01 on all four stations at once (~40 connects/min through one ESPHome proxy for 4.5h).
+# Freshness alone can't catch that: each fast poll re-confirms the boot state.
+MAX_FAST_POLLING_DURATION = 120
 
-# Default sensor enablement
-DEFAULT_ENABLE_INFO_SENSORS = True  # Enable device info sensors by default
-
-# Initial device info setup retries
-INITIAL_RETRY_DELAY = 10  # seconds
-MAX_INITIAL_RETRIES = 3  # number of retries
-
-# Number of failures allowed before operation is considered unsuccessful
-MAX_CONSECUTIVE_FAILURES = 3
-
-# Magic number constants to avoid PLR2004 violations
-STANDBY_STATE_VALUE = 0x02  # State value for standby mode
+# device.py never cancels an in-flight establish_connection() call itself (see
+# BasestationDevice._await_connection) - connection_timeout only controls how long we wait for one
+# before giving up and letting it keep running in the background, so a stale ESPHome proxy slot can
+# no longer be caused by this value being too low. It's a pure responsiveness knob now: how long a
+# poll cycle waits on a slow connect before trying again (or reporting unavailable) rather than a
+# safety floor.
+MIN_CONNECTION_TIMEOUT = 10
+DEFAULT_CONNECTION_TIMEOUT = 20  # some headroom above MIN_CONNECTION_TIMEOUT
