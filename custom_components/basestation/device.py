@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
 from attr import dataclass
 from bleak.backends.device import BLEDevice
-from bleak.exc import BleakError
+from bleak.exc import BleakCharacteristicNotFoundError, BleakError
 from bleak_retry_connector import (
     BLEAK_OUT_OF_SLOTS_BACKOFF_TIME,
     BleakClientWithServiceCache,
@@ -1074,35 +1074,40 @@ class BasestationDevice(ABC):
         self, client: BleakClientWithServiceCache, info: dict[BaseStationDeviceInfoKey, str]
     ) -> bool:
         any_read_successful = False
+        first_read = True
 
-        for index, (characteristic, key) in enumerate(
-            cast(
-                "Iterable[tuple[str, BaseStationDeviceInfoKey]]",
-                (
-                    (FIRMWARE_CHARACTERISTIC, "firmware"),
-                    (MODEL_CHARACTERISTIC, "model"),
-                    (HARDWARE_CHARACTERISTIC, "hardware"),
-                    (MANUFACTURER_CHARACTERISTIC, "manufacturer"),
-                ),
-            )
+        for characteristic, key in cast(
+            "Iterable[tuple[str, BaseStationDeviceInfoKey]]",
+            (
+                (FIRMWARE_CHARACTERISTIC, "firmware"),
+                (MODEL_CHARACTERISTIC, "model"),
+                (HARDWARE_CHARACTERISTIC, "hardware"),
+                (MANUFACTURER_CHARACTERISTIC, "manufacturer"),
+            ),
         ):
             try:
                 if _value := await client.read_gatt_char(characteristic):
                     # V1 pads its model string with NUL bytes ("2.11\0\0\0\0"), which strip() keeps.
                     info[key] = _value.decode("utf-8").replace("\x00", "").strip()
                     any_read_successful = True
+            except BleakCharacteristicNotFoundError:
+                # Looked up in the cached services without going over the link (V1 has no firmware
+                # characteristic), so the next read is still the first one.
+                _LOGGER.debug("Basestation %s has no %s characteristic", self.mac, key)
+                continue
             except BleakError as err:
                 # The first read on this connection (these run before _read_specific_info) failing
                 # this way: a proxy faking the connection. Fail the attempt so the proxy is
                 # penalised, as for a state poll (see _react_to_attempt_failure). Later in the read
                 # it is a real link that dropped, which keeps what was read.
-                if index == 0 and _is_phantom_connection_error(err):
+                if first_read and _is_phantom_connection_error(err):
                     raise
                 _LOGGER.debug("BLE error reading characteristic %s: %s", key, err)
             except TimeoutError as err:
                 _LOGGER.debug("Timeout reading characteristic %s: %s", key, err)
             except Exception:
                 _LOGGER.exception("Unexpected error reading characteristic %s", key)
+            first_read = False
 
         return any_read_successful
 
