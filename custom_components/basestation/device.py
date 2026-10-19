@@ -305,7 +305,7 @@ class BasestationDevice(ABC):
             serial_number=self.mac,
         )
         # Only once read: a None here would overwrite the versions already in the registry on every
-        # reload. __init__.py updates them after each info read.
+        # reload. BasestationInfoCoordinator writes them after each read.
         if firmware := self.get_info("firmware"):
             info["sw_version"] = firmware
         if hardware := self.get_info("hardware"):

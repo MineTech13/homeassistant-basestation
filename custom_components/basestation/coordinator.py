@@ -8,12 +8,14 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any, cast
 
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import DOMAIN, MAX_FAST_POLLING_DURATION, BasestationPowerState
 from .device import CONNECT_TIMEOUT_COOLDOWN
 
 if TYPE_CHECKING:
+    from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
 
     from .device import BasestationDevice
@@ -34,6 +36,7 @@ class BasestationCoordinator(DataUpdateCoordinator):
     def __init__(
         self,
         hass: HomeAssistant,
+        entry: ConfigEntry,
         device: BasestationDevice,
         scan_interval: int,
         fast_scan_interval: int,
@@ -49,6 +52,7 @@ class BasestationCoordinator(DataUpdateCoordinator):
         super().__init__(
             hass,
             _LOGGER,
+            config_entry=entry,
             name=f"{DOMAIN}_{device.mac}",
             update_interval=self.default_interval,
         )
@@ -119,9 +123,12 @@ class BasestationCoordinator(DataUpdateCoordinator):
 class BasestationInfoCoordinator(DataUpdateCoordinator):
     """Class to manage fetching static device information."""
 
+    config_entry: ConfigEntry
+
     def __init__(
         self,
         hass: HomeAssistant,
+        entry: ConfigEntry,
         device: BasestationDevice,
         scan_interval: int,
     ) -> None:
@@ -132,6 +139,7 @@ class BasestationInfoCoordinator(DataUpdateCoordinator):
         super().__init__(
             hass,
             _LOGGER,
+            config_entry=entry,
             name=f"{DOMAIN}_{device.mac}_info",
             update_interval=self.normal_interval,
         )
@@ -141,7 +149,7 @@ class BasestationInfoCoordinator(DataUpdateCoordinator):
         try:
             timeout = (self.device.connection_timeout * 4) + 10
             async with asyncio.timeout(timeout):
-                return cast("dict[str, Any]", await self.device.read_device_info(force=True))
+                info = await self.device.read_device_info(force=True)
         except TimeoutError as err:
             if self.device.has_cached_info:
                 _LOGGER.debug("Timeout fetching info, using cached data for %s", self.device.mac)
@@ -164,3 +172,11 @@ class BasestationInfoCoordinator(DataUpdateCoordinator):
             else:
                 self.update_interval = min(self._retry_interval, self.normal_interval)
                 self._retry_interval *= 2
+
+        # Firmware and hardware version on the device page. get_or_create rather than a lookup,
+        # since this can finish before the platforms have created the device. device_info leaves the
+        # versions out until they are known, and an unchanged device is not written.
+        dr.async_get(self.hass).async_get_or_create(
+            config_entry_id=self.config_entry.entry_id, **self.device.device_info
+        )
+        return cast("dict[str, Any]", info)

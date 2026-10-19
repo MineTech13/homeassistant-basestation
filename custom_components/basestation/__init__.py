@@ -6,9 +6,6 @@ import logging
 from typing import TYPE_CHECKING, cast
 
 from homeassistant.const import CONF_MAC, CONF_NAME, Platform
-from homeassistant.core import callback
-from homeassistant.helpers import device_registry as dr
-from homeassistant.helpers.typing import UNDEFINED
 
 from .const import (
     CONF_CONNECTION_TIMEOUT,
@@ -85,28 +82,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
 
         # Setup Coordinators
-        coordinator = BasestationCoordinator(hass, device, scan_interval, fast_scan_interval)
-        info_coordinator = BasestationInfoCoordinator(hass, device, info_scan_interval)
+        coordinator = BasestationCoordinator(hass, entry, device, scan_interval, fast_scan_interval)
+        info_coordinator = BasestationInfoCoordinator(hass, entry, device, info_scan_interval)
 
         # Initial refresh
         await coordinator.async_config_entry_first_refresh()
-
-        # Created here rather than by the platforms, so it exists before the info read below can
-        # finish and _update_versions has something to update.
-        dr.async_get(hass).async_get_or_create(config_entry_id=entry.entry_id, **device.device_info)
-
-        @callback
-        def _update_versions() -> None:
-            """Copy firmware and hardware versions into the device registry once they have been read."""
-            dev_reg = dr.async_get(hass)
-            if registry_device := dev_reg.async_get_device(identifiers={(DOMAIN, device.mac)}):
-                dev_reg.async_update_device(
-                    registry_device.id,
-                    sw_version=device.get_info("firmware") or UNDEFINED,
-                    hw_version=device.get_info("hardware") or UNDEFINED,
-                )
-
-        entry.async_on_unload(info_coordinator.async_add_listener(_update_versions))
 
         # Info-Refresh not blocking as background task
         entry.async_create_background_task(
