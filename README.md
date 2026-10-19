@@ -15,6 +15,12 @@ A comprehensive Home Assistant integration for managing **Valve Index® Base Sta
 - **Valve Index Base Stations (V2)** - Full feature support
 - **HTC Vive Base Stations (V1)** - UNTESTED/WIP, see [#4](https://github.com/MineTech13/homeassistant-basestation/issues/4)
 
+> **V1 test builds:** improved V1 support is being tested in separate pre-releases named `2.2.0-v1-test.N`
+> ([releases](https://github.com/MineTech13/homeassistant-basestation/releases), discussion in
+> [#4](https://github.com/MineTech13/homeassistant-basestation/issues/4)). 2.1.0 doesn't contain those changes, so if you
+> have V1 stations, use the newest `v1-test` build. In HACS: the integration's ⋮ menu → **Redownload**, then pick the
+> version.
+
 ### 🔄 **Advanced Power Management**
 - **Power Control** - Turn base stations on/off remotely
 - **Standby Mode** - Turns off lasers while keeping motors spinning for short VR breaks, reducing motor wear from excessive spin-ups (V2 only)

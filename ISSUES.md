@@ -50,7 +50,8 @@ interval and logs one warning.
 
 ## V1 (HTC Vive) stations
 
-V1 support is still being tested, see [#4](https://github.com/MineTech13/homeassistant-basestation/issues/4).
+V1 support is still being tested, see [#4](https://github.com/MineTech13/homeassistant-basestation/issues/4). The
+fixes so far are in the `2.2.0-v1-test.N` pre-releases, not in 2.1.0.
 V1 stations have no readable power state, so the switch shows the last command sent.
 
 ## Reporting a problem
