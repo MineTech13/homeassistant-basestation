@@ -1590,7 +1590,8 @@ class ViveBasestationDevice(BasestationDevice):
         self._record_gatt_services(client)
         if self.pair_id:
             info["pair_id"] = f"0x{self.pair_id:08X}"
-            return True
+        # Nothing here came from the station (the pair ID is from the config entry), so it can't
+        # make the read count as a success when every characteristic read failed.
         return False
 
     def _record_gatt_services(self, client: BleakClientWithServiceCache) -> None:
