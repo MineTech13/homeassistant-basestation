@@ -120,5 +120,23 @@
         "name": "Standby Mode"
       }
     }
+  },
+  "exceptions": {
+    "command_failed": {
+      "message": "Could not send the command to {name}. The base station did not respond over Bluetooth."
+    },
+    "v2_only": {
+      "message": "{name} is a Vive base station (V1). This action only works with Valve Index base stations (V2)."
+    }
+  },
+  "services": {
+    "identify": {
+      "name": "Identify",
+      "description": "Blinks the LED of a Valve Index base station (V2) so you can tell which one it is."
+    },
+    "set_standby": {
+      "name": "Set standby",
+      "description": "Puts a Valve Index base station (V2) into standby."
+    }
   }
 }

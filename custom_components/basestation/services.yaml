@@ -1,0 +1,11 @@
+identify:
+  target:
+    entity:
+      integration: basestation
+      domain: switch
+
+set_standby:
+  target:
+    entity:
+      integration: basestation
+      domain: switch

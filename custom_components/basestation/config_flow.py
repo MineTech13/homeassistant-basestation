@@ -46,6 +46,10 @@ _LOGGER = logging.getLogger(__name__)
 # by the station.
 PAIR_ID_REGEX = r"^(0x)?[0-9A-Fa-f]{8}$"
 
+# Six hex pairs separated consistently by ':' or '-', or not at all: exactly the forms format_mac()
+# normalises. It returns anything else unchanged instead of failing, so it can't validate on its own.
+MAC_REGEX = r"^[0-9A-Fa-f]{2}([:-]?)[0-9A-Fa-f]{2}(?:\1[0-9A-Fa-f]{2}){4}$"
+
 # Constants for validation
 MIN_INFO_SCAN_INTERVAL = 300  # 5 minutes minimum
 MIN_STATE_SCAN_INTERVAL = 1  # 1 second minimum
@@ -182,12 +186,12 @@ class BasestationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
 
         # Process the submitted form data
-        formatted_mac = format_mac(user_input[CONF_MAC])
+        raw_mac = user_input[CONF_MAC].strip()
         user_provided_name = user_input.get(CONF_NAME)
         device_type = user_input[CONF_DEVICE_TYPE]
 
         # Validate MAC address format
-        if not formatted_mac:
+        if not re.match(MAC_REGEX, raw_mac):
             errors["base"] = "invalid_mac"
             return self.async_show_form(
                 step_id="manual",
@@ -206,7 +210,7 @@ class BasestationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors=errors,
             )
 
-        mac = formatted_mac.upper()
+        mac = format_mac(raw_mac).upper()
 
         # Use MAC address as the unique ID to prevent duplicates
         await self.async_set_unique_id(mac)

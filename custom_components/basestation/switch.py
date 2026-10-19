@@ -7,6 +7,8 @@ from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ServiceValidationError
+from homeassistant.helpers import entity_platform
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -38,8 +40,38 @@ async def async_setup_entry(
 
     async_add_entities(entities)
 
+    # Shipped in 2.0.1 as plain services taking `entity_id`; as entity services, those calls keep
+    # working and targets work too. Registered once per platform, however many entries set up.
+    platform = entity_platform.async_get_current_platform()
+    platform.async_register_entity_service("identify", None, "async_identify")
+    platform.async_register_entity_service("set_standby", None, "async_set_standby")
 
-class BasestationSwitch(CoordinatorEntity, RestoreEntity, SwitchEntity):
+
+class _BasestationServices(CoordinatorEntity):
+    """The basestation.identify and basestation.set_standby entity services, on both switches."""
+
+    _device: BasestationDevice
+
+    async def async_identify(self) -> None:
+        """Blink the station's LED."""
+        await self._valve_device().identify()
+
+    async def async_set_standby(self) -> None:
+        """Put the station into standby."""
+        await self._valve_device().set_standby()
+        await self.coordinator.async_request_refresh()
+
+    def _valve_device(self) -> ValveBasestationDevice:
+        if not isinstance(self._device, ValveBasestationDevice):
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="v2_only",
+                translation_placeholders={"name": self._device.device_name},
+            )
+        return self._device
+
+
+class BasestationSwitch(_BasestationServices, RestoreEntity, SwitchEntity):
     """Representation of a basestation main power switch."""
 
     def __init__(self, coordinator: BasestationCoordinator, device: BasestationDevice) -> None:
@@ -97,7 +129,7 @@ class BasestationSwitch(CoordinatorEntity, RestoreEntity, SwitchEntity):
         await self.coordinator.async_request_refresh()
 
 
-class BasestationStandbySwitch(CoordinatorEntity, SwitchEntity):
+class BasestationStandbySwitch(_BasestationServices, SwitchEntity):
     """Representation of a basestation standby switch (V2 only)."""
 
     def __init__(self, coordinator: BasestationCoordinator, device: BasestationDevice) -> None:
