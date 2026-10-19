@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, cast
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import DOMAIN, MAX_FAST_POLLING_DURATION, BasestationPowerState
+from .device import CONNECT_TIMEOUT_COOLDOWN
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -18,6 +19,12 @@ if TYPE_CHECKING:
     from .device import BasestationDevice
 
 _LOGGER = logging.getLogger(__name__)
+
+# How often to retry the info read until it has succeeded once. A failed first read (often a
+# connect timeout right after an HA restart) would otherwise leave the info sensors unknown for a
+# whole info_scan_interval. Just past the connect cooldown, so the retry isn't skipped by the same
+# cooldown that the failed read started.
+INFO_RETRY_INTERVAL = datetime.timedelta(seconds=CONNECT_TIMEOUT_COOLDOWN + 30)
 
 
 class BasestationCoordinator(DataUpdateCoordinator):
@@ -113,11 +120,12 @@ class BasestationInfoCoordinator(DataUpdateCoordinator):
     ) -> None:
         """Initialize the info coordinator."""
         self.device = device
+        self.normal_interval = datetime.timedelta(seconds=scan_interval)
         super().__init__(
             hass,
             _LOGGER,
             name=f"{DOMAIN}_{device.mac}_info",
-            update_interval=datetime.timedelta(seconds=scan_interval),
+            update_interval=self.normal_interval,
         )
 
     async def _async_update_data(self) -> dict[str, Any]:
@@ -140,3 +148,7 @@ class BasestationInfoCoordinator(DataUpdateCoordinator):
 
             msg = f"Error fetching device info: {err}"
             raise UpdateFailed(msg) from err
+        finally:
+            # read_device_info() also returns without reading when the lock is busy or polls are in
+            # their connect cooldown, so "has info yet" is the only reliable signal here.
+            self.update_interval = self.normal_interval if self.device.has_cached_info else INFO_RETRY_INTERVAL

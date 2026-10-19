@@ -8,18 +8,6 @@ From the review of [PR #18](https://github.com/MineTech13/homeassistant-basestat
 at `b890651` (2026-10-19). The five blockers from that review were fixed before 2.1.0 shipped. These are the rest,
 ordered by impact. Function names are given instead of line numbers, since those drift.
 
-### 3. Info sensors stay `unknown` for 30 minutes after a failed first read
-
-- **Where:** `__init__.py` starts one info refresh at setup. `read_device_info()` returns the empty `self._info`
-  without raising when the lock times out or the connect cooldown is active. The coordinator counts that as a
-  successful update.
-- **When it happens:** After an HA restart the first connect times out, which starts the 180 s cooldown. The info
-  refresh is skipped and returns `{}`. The next try is after `info_scan_interval` (1800 s by default, up to 24 h), so
-  Firmware, Model and Channel stay `unknown` for 30 minutes although the station is back after about 4.
-- **Fix:** In `BasestationInfoCoordinator._async_update_data()`, while `device.has_cached_info` is False, set a short
-  `update_interval` (e.g. `CONNECT_TIMEOUT_COOLDOWN` + 30 s) and go back to `info_scan_interval` once info is in.
-- Also mentioned as a known limitation in the 2.1.0 release notes.
-
 ### 4. Old 10 s connection timeout survives the upgrade from 2.0.1
 
 - **Where:** `__init__.py`, `async_setup_entry()`, plus the config entry version in `config_flow.py` (`VERSION = 1`,
