@@ -64,8 +64,9 @@ UNAVAILABLE_AFTER_CONSECUTIVE_FAILURES = 3
 # connected this long after it before reading it back or disconnecting (as ShayBox/Lighthouse does).
 V1_SETTLE_DELAY = 1.0
 # A V1 command is checked by reading the power characteristic back (see decode_v1_readback) and
-# rewritten until the station shows it, at most this many writes in total. That's the three writes
-# V1 always got before the read-back existed.
+# rewritten until the station shows it, at most this many writes in total: the three writes V1 always
+# got before the read-back existed. A read-back that fails leaves it at the one write, which is also
+# all ShayBox/Lighthouse sends.
 V1_COMMAND_ATTEMPTS = 3
 
 # A connect attempt we've stopped waiting for is normal and harmless (see _await_connection), but
@@ -1379,6 +1380,11 @@ class ViveBasestationDevice(BasestationDevice):
         """Return the default name."""
         return "Vive Basestation"
 
+    @property
+    def last_command_confirmed(self) -> bool:
+        """Return True if the last command was read back from the station, which also set the state."""
+        return self.last_command_result is not None and self.last_command_result["result"] == "confirmed"
+
     def restore_is_on(self, *, is_on: bool) -> None:
         """
         Restore the last known on/off state after a restart, until the first poll reads it back.
@@ -1422,17 +1428,16 @@ class ViveBasestationDevice(BasestationDevice):
             _LOGGER.exception("Invalid pair_id format for V1 basestation %s", self.mac)
             return
 
-        self.last_command_result = None
+        outcome: dict[str, Any] = {}
         sent = await self.async_ble_operation(
             BLEOperationWrite(
                 V1_PWR_CHARACTERISTIC,
                 payload,
                 without_response=True,
                 settle_delay=V1_SETTLE_DELAY,
-                after_write=lambda client: self._verify_power_command(client, command, payload),
+                after_write=lambda client: self._verify_power_command(client, command, payload, outcome),
             )
         )
-        outcome: dict[str, Any] = self.last_command_result or {}
         _LOGGER.debug(
             "Sent %s to V1 basestation %s: %s", command.name, self.mac, outcome.get("result") if sent else "failed"
         )
@@ -1447,7 +1452,11 @@ class ViveBasestationDevice(BasestationDevice):
                 outcome["writes"],
                 outcome["readback"],
             )
-            raise self._command_failed()
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="command_not_taken",
+                translation_placeholders={"name": self.device_name, "attempts": str(outcome["writes"])},
+            )
 
         # Confirmed already set the state from the read-back. Unverified means the write went through
         # but couldn't be read back, so fall back to the command itself, as before the read-back existed.
@@ -1455,13 +1464,14 @@ class ViveBasestationDevice(BasestationDevice):
             self._is_on = command is V1Command.TURN_ON
 
     async def _verify_power_command(
-        self, client: BleakClientWithServiceCache, command: V1Command, payload: bytes
+        self, client: BleakClientWithServiceCache, command: V1Command, payload: bytes, outcome: dict[str, Any]
     ) -> None:
         """
         Read a just-sent command back, rewriting it until the station reports it (BLEOperationWrite.after_write).
 
-        Leaves the outcome in last_command_result. A read that fails stops it as "unverified" rather
-        than failing the command, since the write itself went through.
+        Fills in outcome, which belongs to this one command: another one can be waiting for the lock
+        meanwhile. last_command_result gets a copy for diagnostics. A read that fails stops it as
+        "unverified" rather than failing the command, since the write itself went through.
         """
         expected = V1_COMMAND_READBACK[command]
         result = "unverified"
@@ -1487,13 +1497,14 @@ class ViveBasestationDevice(BasestationDevice):
             await client.write_gatt_char(V1_PWR_CHARACTERISTIC, payload, response=False)
             await asyncio.sleep(V1_SETTLE_DELAY)
 
-        self.last_command_result = {
+        outcome |= {
             "at": time.time(),
             "command": command.name,
             "result": result,
             "writes": writes,
             "readback": readback,
         }
+        self.last_command_result = dict(outcome)
 
     def _check_pair_id_against_name(self) -> None:
         """Warn once if the configured pair ID can't belong to this station (see v1_pair_id_matches_name)."""

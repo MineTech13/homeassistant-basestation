@@ -159,8 +159,10 @@ restarts and never contains the pair ID. Used in three ways:
 - `update()` reads it on every state poll, like V2. That also gives V1 real availability from connects, through the shared
   cooldown / failure / proxy-penalty path. Before, V1 only looked at advertisements, with its own 5-minute retry cooldown.
 - After a command, `_verify_power_command()` (the opt-in `BLEOperationWrite.after_write` hook) reads it back and rewrites
-  until it matches, at most `V1_COMMAND_ATTEMPTS` (3) writes. Still no match → `command_failed`. A failed read → "unverified",
-  and the state is taken from the command as before. Outcome in diagnostics as `last_command_result`.
+  until it matches, at most `V1_COMMAND_ATTEMPTS` (3) writes. Still no match → `command_not_taken` (hints at the pair ID). A
+  failed read → "unverified" after one write, and the state is taken from the command as before. A confirmed command needs no
+  poll afterwards, so the switch skips it. The outcome goes back per call (a second command can queue meanwhile), with a copy
+  in diagnostics as `last_command_result`.
 - Changes from SteamVR or other apps show up on the next poll if they use the same bytes; any other value is "unknown" and
   leaves the state alone. All zeros counts as on (assumes a station comes up on when it gets power; not confirmed).
 Not known: whether a command with the wrong pair ID changes the read-back. So a confirmed command only proves the station

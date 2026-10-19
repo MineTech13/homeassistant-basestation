@@ -115,12 +115,20 @@ class BasestationSwitch(_BasestationServices, RestoreEntity, SwitchEntity):
     async def async_turn_on(self, **_kwargs: Any) -> None:
         """Turn the switch on."""
         await self._device.turn_on()
-        await self.coordinator.async_request_refresh()
+        await self._refresh_after_command()
 
     async def async_turn_off(self, **_kwargs: Any) -> None:
         """Turn the switch off."""
         await self._device.turn_off()
-        await self.coordinator.async_request_refresh()
+        await self._refresh_after_command()
+
+    async def _refresh_after_command(self) -> None:
+        # A V1 command that was read back already took the state from the station over the same
+        # connection. Polling straight away would only cost the proxy another connect.
+        if isinstance(self._device, ViveBasestationDevice) and self._device.last_command_confirmed:
+            self.coordinator.async_update_listeners()
+        else:
+            await self.coordinator.async_request_refresh()
 
 
 class BasestationStandbySwitch(_BasestationServices, SwitchEntity):

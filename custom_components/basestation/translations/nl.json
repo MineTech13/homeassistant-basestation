@@ -125,6 +125,9 @@
     "command_failed": {
       "message": "Kon de opdracht niet naar {name} sturen. Het basestation reageerde niet via Bluetooth."
     },
+    "command_not_taken": {
+      "message": "{name} heeft de opdracht ook na {attempts} pogingen niet overgenomen. Controleer of de koppelings-ID overeenkomt met de ID op de achterkant van het basestation."
+    },
     "v2_only": {
       "message": "{name} is een Vive basestation (V1). Deze actie werkt alleen met Valve Index basestations (V2)."
     }

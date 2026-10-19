@@ -125,6 +125,9 @@
     "command_failed": {
       "message": "Impossibile inviare il comando a {name}. La stazione base non ha risposto via Bluetooth."
     },
+    "command_not_taken": {
+      "message": "{name} non ha accettato il comando, nemmeno dopo {attempts} tentativi. Controlla che l'ID di associazione corrisponda all'ID stampato sul retro della stazione base."
+    },
     "v2_only": {
       "message": "{name} è una stazione base Vive (V1). Questa azione funziona solo con le stazioni base Valve Index (V2)."
     }
