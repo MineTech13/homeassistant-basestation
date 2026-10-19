@@ -1001,14 +1001,16 @@ class BasestationDevice(ABC):
     ) -> bool:
         any_read_successful = False
 
-        for characteristic, key in cast(
-            "Iterable[tuple[str, BaseStationDeviceInfoKey]]",
-            (
-                (FIRMWARE_CHARACTERISTIC, "firmware"),
-                (MODEL_CHARACTERISTIC, "model"),
-                (HARDWARE_CHARACTERISTIC, "hardware"),
-                (MANUFACTURER_CHARACTERISTIC, "manufacturer"),
-            ),
+        for index, (characteristic, key) in enumerate(
+            cast(
+                "Iterable[tuple[str, BaseStationDeviceInfoKey]]",
+                (
+                    (FIRMWARE_CHARACTERISTIC, "firmware"),
+                    (MODEL_CHARACTERISTIC, "model"),
+                    (HARDWARE_CHARACTERISTIC, "hardware"),
+                    (MANUFACTURER_CHARACTERISTIC, "manufacturer"),
+                ),
+            )
         ):
             try:
                 if _value := await client.read_gatt_char(characteristic):
@@ -1016,9 +1018,11 @@ class BasestationDevice(ABC):
                     info[key] = _value.decode("utf-8").replace("\x00", "").strip()
                     any_read_successful = True
             except BleakError as err:
-                # Nothing read yet on this connection: a proxy faking it. Fail the attempt so the
-                # proxy is penalised, as for a state poll (see _react_to_attempt_failure).
-                if _is_phantom_connection_error(err) and not info:
+                # The first read on this connection (these run before _read_specific_info) failing
+                # this way: a proxy faking the connection. Fail the attempt so the proxy is
+                # penalised, as for a state poll (see _react_to_attempt_failure). Later in the read
+                # it is a real link that dropped, which keeps what was read.
+                if index == 0 and _is_phantom_connection_error(err):
                     raise
                 _LOGGER.debug("BLE error reading characteristic %s: %s", key, err)
             except TimeoutError as err:
@@ -1259,9 +1263,6 @@ class ValveBasestationDevice(BasestationDevice):
                 info["channel"] = int.from_bytes(channel, byteorder="big")
                 return True
         except BleakError as err:
-            # See _read_standard_characteristics.
-            if _is_phantom_connection_error(err) and not info:
-                raise
             _LOGGER.debug("BLE error reading channel: %s", err)
         except TimeoutError as err:
             _LOGGER.debug("Timeout reading channel: %s", err)
