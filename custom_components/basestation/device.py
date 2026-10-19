@@ -58,7 +58,7 @@ UNAVAILABLE_AFTER_CONSECUTIVE_FAILURES = 3
 # V1 has no characteristic to actively read a status from, so unlike V2 its update() poll can't
 # naturally retry/self-heal on its own. Without this, once UNAVAILABLE_AFTER_CONSECUTIVE_FAILURES
 # is hit the device stays unavailable forever, even after it's back in range, until a user happens
-# to send a command that succeeds. This gives it another chance periodically instead.
+# to send a command that succeeds. This gives it another chance this long after it went unavailable.
 UNAVAILABLE_RETRY_COOLDOWN = 300.0
 
 # A connect attempt we've stopped waiting for is normal and harmless (see _await_connection), but
@@ -196,7 +196,6 @@ class BasestationDevice(ABC):
 
         self._last_connection_attempt = 0.0
         self._consecutive_failures = 0
-        self._last_failure_time = 0.0
         # Monotonic time the device last became unavailable, None while available. Starts at setup,
         # since _available starts False, so a station that is unreachable from the start gets its
         # outage measured too.
@@ -449,7 +448,6 @@ class BasestationDevice(ABC):
     def _record_connection_failure(self) -> None:
         self._consecutive_failures += 1
         self._retry_count += 1
-        self._last_failure_time = time.time()
         self.connection_log.stats.operation_failed += 1
         if self._consecutive_failures >= UNAVAILABLE_AFTER_CONSECUTIVE_FAILURES:
             self._set_available(f"{self._consecutive_failures} consecutive failures", available=False)
@@ -1367,9 +1365,11 @@ class ViveBasestationDevice(BasestationDevice):
         # available here - this never performs an actual BLE operation, unlike V2's update(), so
         # unlike V2 it can't self-heal by simply succeeding on the next poll. Once
         # _record_connection_failure has marked us unavailable, only give it another chance after
-        # UNAVAILABLE_RETRY_COOLDOWN has passed since the last failure, rather than requiring a
+        # UNAVAILABLE_RETRY_COOLDOWN has passed since it went unavailable, rather than requiring a
         # user to happen to send a command that succeeds - otherwise a station that came back into
-        # range would stay marked unavailable indefinitely.
+        # range would stay marked unavailable indefinitely. Not since the last failure: info reads
+        # keep failing meanwhile, and retried more often than the cooldown they would hold it off
+        # for good.
         try:
             ble_device = self.get_ble_device()
             if ble_device is None:
@@ -1377,7 +1377,8 @@ class ViveBasestationDevice(BasestationDevice):
                 return
 
             if self._consecutive_failures >= UNAVAILABLE_AFTER_CONSECUTIVE_FAILURES:
-                if time.time() - self._last_failure_time < UNAVAILABLE_RETRY_COOLDOWN:
+                since = self._unavailable_since
+                if since is not None and time.monotonic() - since < UNAVAILABLE_RETRY_COOLDOWN:
                     return
                 self._consecutive_failures = 0
 
