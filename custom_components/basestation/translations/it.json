@@ -119,5 +119,23 @@
         "name": "Modalità standby"
       }
     }
+  },
+  "exceptions": {
+    "command_failed": {
+      "message": "Impossibile inviare il comando a {name}. La stazione base non ha risposto via Bluetooth."
+    },
+    "v2_only": {
+      "message": "{name} è una stazione base Vive (V1). Questa azione funziona solo con le stazioni base Valve Index (V2)."
+    }
+  },
+  "services": {
+    "identify": {
+      "name": "Identifica",
+      "description": "Fa lampeggiare il LED di una stazione base Valve Index (V2) per riconoscerla."
+    },
+    "set_standby": {
+      "name": "Attiva standby",
+      "description": "Mette una stazione base Valve Index (V2) in modalità standby."
+    }
   }
 }

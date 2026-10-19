@@ -119,5 +119,23 @@
         "name": "Modo de espera"
       }
     }
+  },
+  "exceptions": {
+    "command_failed": {
+      "message": "No se pudo enviar el comando a {name}. La estación base no respondió por Bluetooth."
+    },
+    "v2_only": {
+      "message": "{name} es una estación base Vive (V1). Esta acción solo funciona con estaciones base Valve Index (V2)."
+    }
+  },
+  "services": {
+    "identify": {
+      "name": "Identificar",
+      "description": "Hace parpadear el LED de una estación base Valve Index (V2) para que pueda reconocerla."
+    },
+    "set_standby": {
+      "name": "Activar modo de espera",
+      "description": "Pone una estación base Valve Index (V2) en modo de espera."
+    }
   }
 }

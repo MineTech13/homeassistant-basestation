@@ -13,6 +13,7 @@ independent of the connection code it observes.
 
 from __future__ import annotations
 
+import re
 import time
 from collections import deque
 from dataclasses import asdict, dataclass, replace
@@ -27,6 +28,12 @@ MAX_EVENTS = 50
 
 # Longer messages are almost always a bleak traceback repr whose tail adds nothing.
 MAX_DETAIL_LENGTH = 200
+
+# Exception text from habluetooth/bleak often names the station's full address ("... that can reach
+# address AA:BB:...") and ends up in diagnostics that users attach to public issues, and in the
+# recorder via the last-error sensor. Key-based redaction can't catch it inside a message.
+MAC_PATTERN = re.compile(r"(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}")
+REDACTED = "**REDACTED**"
 
 # How far back _append looks for an identical event to collapse into. Comfortably wider than the
 # handful of events one failing poll cycle emits, so a repeating cycle collapses instead of
@@ -203,8 +210,10 @@ class ConnectionLog:
         looking. Their volume is already captured by the counters, and the most recent one is
         still retained as `last_success`, which is what makes "it was fine until 04:12" answerable.
         """
-        if detail is not None and len(detail) > MAX_DETAIL_LENGTH:
-            detail = detail[:MAX_DETAIL_LENGTH] + "..."
+        if detail is not None:
+            detail = MAC_PATTERN.sub(REDACTED, detail)
+            if len(detail) > MAX_DETAIL_LENGTH:
+                detail = detail[:MAX_DETAIL_LENGTH] + "..."
 
         event = ConnectionEvent(at=time.time(), phase=phase, outcome=outcome, detail=detail, duration=duration)
         if store:

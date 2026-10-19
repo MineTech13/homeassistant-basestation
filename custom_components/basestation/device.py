@@ -5,6 +5,7 @@ import logging
 import struct
 import time
 from abc import ABC, abstractmethod
+from functools import partial
 from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
 from attr import dataclass
@@ -18,6 +19,7 @@ from bleak_retry_connector import (
 )
 from homeassistant.components import bluetooth
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.device_registry import CONNECTION_BLUETOOTH, DeviceInfo
 
 from .connection_log import ConnectionLog, Outcome, Phase
@@ -148,6 +150,23 @@ class BLEOperationWrite:
     repeat_delay: float = 1.0
 
 
+@dataclass(repr=False)
+class _ConnectAttempt:
+    """One in-flight establish_connection() call and who still depends on it - see _await_connection()."""
+
+    task: asyncio.Task[BleakClientWithServiceCache]
+    started: float
+    warned: bool = False
+    # Kept per attempt, not per device: a new attempt can start before the previous one's done
+    # callback has run, and a shared count would then make that callback think its own client
+    # still had a taker.
+    waiters: int = 0
+    # A waiter returned the connected client to its caller, which now owns closing it.
+    claimed: bool = False
+    # The client was already handed to _close_abandoned_client().
+    closed: bool = False
+
+
 class BasestationDevice(ABC):
     """Base class for basestation devices."""
 
@@ -190,10 +209,7 @@ class BasestationDevice(ABC):
 
         # Tracks an in-flight establish_connection() call that outlives our own willingness to
         # wait for it - see _await_connection().
-        self._pending_connect_task: asyncio.Task[BleakClientWithServiceCache] | None = None
-        self._pending_connect_waiters = 0
-        self._pending_connect_started = 0.0
-        self._pending_connect_warned = False
+        self._pending_connect: _ConnectAttempt | None = None
 
         # Observability only - never consulted for control flow. See connection_log.py for why
         # this is kept in memory rather than relying on the log.
@@ -231,10 +247,10 @@ class BasestationDevice(ABC):
     @property
     def pending_connect_age(self) -> float | None:
         """Return seconds the current in-flight connect has been running, or None if there is none."""
-        task = self._pending_connect_task
-        if task is None or task.done():
+        attempt = self._pending_connect
+        if attempt is None or attempt.task.done():
             return None
-        return time.monotonic() - self._pending_connect_started
+        return time.monotonic() - attempt.started
 
     @property
     def connect_cooldown_remaining(self) -> float | None:
@@ -360,8 +376,8 @@ class BasestationDevice(ABC):
         # _on_connect_task_done rather than tearing the entry down while it's still in flight. Not
         # cancelling it even here: if it doesn't finish in time, it'll still get closed by
         # _on_connect_task_done whenever it does, just without this method waiting around for it.
-        if (task := self._pending_connect_task) and not task.done():
-            _, pending = await asyncio.wait({task}, timeout=5.0)
+        if (attempt := self._pending_connect) and not attempt.task.done():
+            _, pending = await asyncio.wait({attempt.task}, timeout=5.0)
             if pending:
                 _LOGGER.debug("Pending connect for %s did not finish during cleanup", self.mac)
 
@@ -431,6 +447,14 @@ class BasestationDevice(ABC):
         self._last_power_state = state
         self._last_power_state_update = time.time()
         self._is_on = state != 0x00
+
+    def _command_failed(self) -> HomeAssistantError:
+        """Return the error a user command raises when it never reached the station."""
+        return HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="command_failed",
+            translation_placeholders={"name": self.device_name},
+        )
 
     async def _perform_ble_operation(
         self, client: BleakClientWithServiceCache, op: BLEOperationRead | BLEOperationWrite
@@ -504,10 +528,10 @@ class BasestationDevice(ABC):
         attempt (or the next poll cycle) comes looking for a connection before this one resolves,
         it reuses this same in-flight task instead of racing a second, competing connection to the
         same device. Whatever happens if nobody ends up waiting for it is handled by
-        _on_connect_task_done/_close_abandoned_client.
+        _on_connect_task_done/_close_if_unclaimed.
         """
-        task = self._pending_connect_task
-        if task is None or task.done():
+        attempt = self._pending_connect
+        if attempt is None or attempt.task.done():
             task = self.hass.async_create_background_task(
                 establish_connection(
                     BleakClientWithServiceCache,
@@ -519,17 +543,16 @@ class BasestationDevice(ABC):
                 ),
                 name=f"basestation_connect_{self.mac}",
             )
-            task.add_done_callback(self._on_connect_task_done)
-            self._pending_connect_task = task
-            self._pending_connect_started = time.monotonic()
-            self._pending_connect_warned = False
+            attempt = _ConnectAttempt(task=task, started=time.monotonic())
+            task.add_done_callback(partial(self._on_connect_task_done, attempt))
+            self._pending_connect = attempt
             self.connection_log.stats.connect_started += 1
         else:
             self.connection_log.stats.connect_reused += 1
-            self._warn_if_connect_is_stuck()
+            self._warn_if_connect_is_stuck(attempt)
 
-        started = self._pending_connect_started
-        self._pending_connect_waiters += 1
+        task = attempt.task
+        attempt.waiters += 1
         try:
             # asyncio.wait() never cancels the task when we are cancelled, same as shield(), but
             # unlike shield() on Python 3.14.6+ it doesn't log the task's eventual exception as an
@@ -548,28 +571,36 @@ class BasestationDevice(ABC):
                 self.connection_log.record(
                     Phase.CONNECT,
                     Outcome.ABANDONED,
-                    duration=time.monotonic() - started,
-                    detail=f"{self._pending_connect_waiters - 1} other waiter(s) remaining",
+                    duration=time.monotonic() - attempt.started,
+                    detail=f"{attempt.waiters - 1} other waiter(s) remaining",
                 )
             raise
         except Exception as err:
             self.connection_log.stats.connect_failed += 1
-            self.connection_log.record_exception(Phase.CONNECT, Outcome.ERROR, err, duration=time.monotonic() - started)
+            self.connection_log.record_exception(
+                Phase.CONNECT, Outcome.ERROR, err, duration=time.monotonic() - attempt.started
+            )
             raise
         else:
+            attempt.claimed = True
             self.connection_log.stats.connect_succeeded += 1
-            self.connection_log.record(Phase.CONNECT, Outcome.OK, duration=time.monotonic() - started, store=False)
+            self.connection_log.record(
+                Phase.CONNECT, Outcome.OK, duration=time.monotonic() - attempt.started, store=False
+            )
             return client
         finally:
-            self._pending_connect_waiters -= 1
+            attempt.waiters -= 1
+            # The connect may have finished in the same loop iteration our wait was cancelled in.
+            # Its done callback then already ran, found us still waiting and left the client to us.
+            self._close_if_unclaimed(attempt)
 
-    def _warn_if_connect_is_stuck(self) -> None:
+    def _warn_if_connect_is_stuck(self, attempt: _ConnectAttempt) -> None:
         """Warn once when an in-flight connect has been running implausibly long."""
-        age = self.pending_connect_age
-        if age is None or age < PENDING_CONNECT_WARN_AGE or self._pending_connect_warned:
+        age = time.monotonic() - attempt.started
+        if age < PENDING_CONNECT_WARN_AGE or attempt.warned:
             return
 
-        self._pending_connect_warned = True
+        attempt.warned = True
         self.connection_log.record(Phase.CONNECT, Outcome.TIMEOUT, detail="still in flight", duration=age)
         _LOGGER.warning(
             "Connect attempt for basestation %s has been in flight for %.0fs and is still running. "
@@ -581,31 +612,25 @@ class BasestationDevice(ABC):
             self.connection_log.stats.out_of_slots,
         )
 
-    def _on_connect_task_done(self, task: asyncio.Task[BleakClientWithServiceCache]) -> None:
+    def _on_connect_task_done(self, attempt: _ConnectAttempt, task: asyncio.Task[BleakClientWithServiceCache]) -> None:
         """
-        Handle a connect attempt that finished after everyone waiting on it already gave up.
+        Handle a connect attempt finishing, closing its client if nobody is waiting for it any more.
 
-        If it succeeded, we now own a live connection nobody asked for anymore - close it right
-        away so it can't sit there occupying a proxy slot. If it failed, establish_connection()
-        already ran its own cleanup before raising, so there's nothing left to do.
+        If it failed, establish_connection() already ran its own cleanup before raising, so there's
+        nothing left to do but record it. If waiters remain, they see the outcome themselves, and
+        whichever leaves last without taking the client closes it (see _close_if_unclaimed).
         """
-        # A replacement attempt may already have started by the time this callback runs (done
-        # callbacks are scheduled, not immediate), in which case _pending_connect_started belongs
-        # to that one and says nothing about this task's age.
-        age = time.monotonic() - self._pending_connect_started if self._pending_connect_task is task else None
+        if self._pending_connect is attempt:
+            self._pending_connect = None
 
-        if self._pending_connect_task is task:
-            self._pending_connect_task = None
-
-        if self._pending_connect_waiters > 0:
+        if attempt.waiters > 0:
             return
 
-        try:
-            client = task.result()
-        except asyncio.CancelledError:
+        age = time.monotonic() - attempt.started
+        if task.cancelled():
             self.connection_log.record(Phase.CONNECT, Outcome.CANCELLED, duration=age, detail="nobody waiting")
             return
-        except Exception as err:
+        if (err := task.exception()) is not None:
             # establish_connection() ran its own cleanup before raising, so the slot is not at
             # risk here - but the error is still worth keeping, because this is the one connect
             # outcome nobody is awaiting and it would otherwise vanish entirely.
@@ -614,14 +639,31 @@ class BasestationDevice(ABC):
             )
             return
 
+        self._close_if_unclaimed(attempt)
+
+    def _close_if_unclaimed(self, attempt: _ConnectAttempt) -> None:
+        """
+        Close the client of a connect that succeeded once nothing was waiting for it any more.
+
+        Called from both the done callback and each waiter on its way out, because either can be
+        the last to look: exactly one of them gets here with the task finished, no waiters left and
+        the client untaken, and `closed` keeps a late second call from closing it again.
+        """
+        task = attempt.task
+        if attempt.waiters or attempt.claimed or attempt.closed or not task.done() or task.cancelled():
+            return
+        if task.exception() is not None:
+            return
+
+        attempt.closed = True
         _LOGGER.info(
-            "Connect for basestation %s succeeded%s, once nothing was waiting for it any more; "
+            "Connect for basestation %s succeeded after %.0fs, once nothing was waiting for it any more; "
             "disconnecting it so it cannot hold a proxy connection slot",
             self.mac,
-            f" after {age:.0f}s" if age is not None else "",
+            time.monotonic() - attempt.started,
         )
         self.hass.async_create_background_task(
-            self._close_abandoned_client(client), name=f"basestation_close_abandoned_{self.mac}"
+            self._close_abandoned_client(task.result()), name=f"basestation_close_abandoned_{self.mac}"
         )
 
     async def _close_abandoned_client(self, client: BleakClientWithServiceCache) -> None:
@@ -694,7 +736,10 @@ class BasestationDevice(ABC):
 
     async def async_ble_operation(self, op: BLEOperationRead | BLEOperationWrite) -> bool | bytearray:
         """Execute a BLE operation with proper connection management."""
-        lock_timeout = 20.0 if isinstance(op, BLEOperationWrite) else 10.0
+        # A user command queued behind a poll has to outlast it, and a poll holds the lock for up to
+        # two attempts of connection_timeout each (a timed-out connect starts the cooldown, which
+        # ends the poll's retries). A fixed wait silently dropped commands at larger timeouts.
+        lock_timeout = 2 * self.connection_timeout + 5.0 if isinstance(op, BLEOperationWrite) else 10.0
         holder = f"{'write' if isinstance(op, BLEOperationWrite) else 'read'} {op.characteristic_uuid}"
         # Reads are the periodic state poll; writes are user commands, which always get to try.
         is_poll = isinstance(op, BLEOperationRead)
@@ -1094,41 +1139,45 @@ class ValveBasestationDevice(BasestationDevice):
 
     async def turn_on(self) -> None:
         """Turn on the device."""
-        if self._last_power_state == BasestationPowerState.ON:
-            return
-
-        self._target_power_state = BasestationPowerState.STARTING_UP
-        self._target_state_expires = time.time() + 15.0
-        self._update_power_state(BasestationPowerState.STARTING_UP)
-
-        await self.async_ble_operation(
-            BLEOperationWrite(
-                V2_PWR_CHARACTERISTIC,
-                bytes([BasestationPowerState.STARTING_UP]),
-                without_response=True,
-                repeat_count=3,
-                repeat_delay=1.0,
-            )
-        )
+        await self._write_power_state(BasestationPowerState.STARTING_UP)
 
     async def turn_off(self) -> None:
         """Turn off the device."""
-        if self._last_power_state == BasestationPowerState.SLEEP:
-            return
+        await self._write_power_state(BasestationPowerState.SLEEP)
 
-        self._target_power_state = BasestationPowerState.SLEEP
+    async def _write_power_state(self, state: BasestationPowerState) -> None:
+        """
+        Send a power state, showing it right away until a poll confirms or the write fails.
+
+        Deliberately no early return when the station already looks to be in `state`: that value
+        is up to a poll interval old (longer during a connect cooldown), and SteamVR may have
+        switched the station since, so trusting it drops real commands. Sending a state the station
+        is already in is harmless.
+        """
+        previous = (self._last_power_state, self._last_power_state_update, self._is_on)
+        self._target_power_state = state
         self._target_state_expires = time.time() + 15.0
-        self._update_power_state(BasestationPowerState.SLEEP)
+        self._update_power_state(state)
+        shown_at = self._last_power_state_update
 
-        await self.async_ble_operation(
+        if await self.async_ble_operation(
             BLEOperationWrite(
                 V2_PWR_CHARACTERISTIC,
-                bytes([BasestationPowerState.SLEEP]),
+                bytes([state]),
                 without_response=True,
                 repeat_count=3,
                 repeat_delay=1.0,
             )
-        )
+        ):
+            return
+
+        # Take the optimistic state back, or the switch would show a state the station was never
+        # told about and the target window would keep the next polls from correcting it. Unless
+        # something newer (a later command, a confirming read) has replaced it in the meantime.
+        if self._last_power_state_update == shown_at:
+            self._target_power_state = None
+            self._last_power_state, self._last_power_state_update, self._is_on = previous
+        raise self._command_failed()
 
     async def update(self) -> None:
         """Update the device state."""
@@ -1165,26 +1214,11 @@ class ValveBasestationDevice(BasestationDevice):
 
     async def set_standby(self) -> None:
         """Set the device to standby mode."""
-        if self._last_power_state == BasestationPowerState.STANDBY:
-            return
-
-        self._target_power_state = BasestationPowerState.STANDBY
-        self._target_state_expires = time.time() + 15.0
-        self._update_power_state(BasestationPowerState.STANDBY)
-
-        await self.async_ble_operation(
-            BLEOperationWrite(
-                V2_PWR_CHARACTERISTIC,
-                bytes([BasestationPowerState.STANDBY]),
-                without_response=True,
-                repeat_count=3,
-                repeat_delay=1.0,
-            )
-        )
+        await self._write_power_state(BasestationPowerState.STANDBY)
 
     async def identify(self) -> None:
         """Make the device blink its LED to identify it."""
-        await self.async_ble_operation(
+        if not await self.async_ble_operation(
             BLEOperationWrite(
                 V2_IDENTIFY_CHARACTERISTIC,
                 V2Command.IDENTIFY.value,
@@ -1192,7 +1226,8 @@ class ValveBasestationDevice(BasestationDevice):
                 repeat_count=3,
                 repeat_delay=1.0,
             )
-        )
+        ):
+            raise self._command_failed()
 
     async def _read_specific_info(
         self, client: BleakClientWithServiceCache, info: dict[BaseStationDeviceInfoKey, Any]
@@ -1261,16 +1296,21 @@ class ViveBasestationDevice(BasestationDevice):
             command[0:4] = V1Command.TURN_ON.value
             command[4:8] = struct.pack("<I", int(self.pair_id))
 
-            if await self.async_ble_operation(
+            sent = await self.async_ble_operation(
                 BLEOperationWrite(
                     V1_PWR_CHARACTERISTIC, bytes(command), without_response=True, repeat_count=3, repeat_delay=1.0
                 )
-            ):
-                self._is_on = True
+            )
         except (ValueError, struct.error):
             _LOGGER.exception("Invalid pair_id format for V1 basestation %s", self.mac)
+            return
         except Exception:
             _LOGGER.exception("Unexpected error turning on V1 basestation")
+            return
+
+        if not sent:
+            raise self._command_failed()
+        self._is_on = True
 
     async def turn_off(self) -> None:
         """Turn off the device."""
@@ -1283,16 +1323,21 @@ class ViveBasestationDevice(BasestationDevice):
             command[0:4] = V1Command.TURN_OFF.value
             command[4:8] = struct.pack("<I", int(self.pair_id))
 
-            if await self.async_ble_operation(
+            sent = await self.async_ble_operation(
                 BLEOperationWrite(
                     V1_PWR_CHARACTERISTIC, bytes(command), without_response=True, repeat_count=3, repeat_delay=1.0
                 )
-            ):
-                self._is_on = False
+            )
         except (ValueError, struct.error):
             _LOGGER.exception("Invalid pair_id format for V1 basestation %s", self.mac)
+            return
         except Exception:
             _LOGGER.exception("Unexpected error turning off V1 basestation")
+            return
+
+        if not sent:
+            raise self._command_failed()
+        self._is_on = False
 
     async def update(self) -> None:
         """Update the device state."""

@@ -119,5 +119,23 @@
         "name": "Standby-Modus"
       }
     }
+  },
+  "exceptions": {
+    "command_failed": {
+      "message": "Der Befehl konnte nicht an {name} gesendet werden. Die Basestation hat über Bluetooth nicht geantwortet."
+    },
+    "v2_only": {
+      "message": "{name} ist eine Vive Basestation (V1). Diese Aktion funktioniert nur mit Valve Index Basestations (V2)."
+    }
+  },
+  "services": {
+    "identify": {
+      "name": "Identifizieren",
+      "description": "Lässt die LED einer Valve Index Basestation (V2) blinken, damit Sie sie erkennen."
+    },
+    "set_standby": {
+      "name": "Standby aktivieren",
+      "description": "Versetzt eine Valve Index Basestation (V2) in den Standby-Modus."
+    }
   }
 }

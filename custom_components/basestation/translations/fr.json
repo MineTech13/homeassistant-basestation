@@ -119,5 +119,23 @@
         "name": "Mode veille"
       }
     }
+  },
+  "exceptions": {
+    "command_failed": {
+      "message": "Impossible d'envoyer la commande à {name}. La station de base n'a pas répondu via Bluetooth."
+    },
+    "v2_only": {
+      "message": "{name} est une station de base Vive (V1). Cette action ne fonctionne qu'avec les stations de base Valve Index (V2)."
+    }
+  },
+  "services": {
+    "identify": {
+      "name": "Identifier",
+      "description": "Fait clignoter la LED d'une station de base Valve Index (V2) pour la reconnaître."
+    },
+    "set_standby": {
+      "name": "Activer la veille",
+      "description": "Met une station de base Valve Index (V2) en mode veille."
+    }
   }
 }
