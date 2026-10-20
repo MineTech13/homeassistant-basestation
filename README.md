@@ -305,13 +305,18 @@ Transform your VR setup with smart automations:
 ## 🏆 Credits & Acknowledgments
 
 ### Primary Developers
-- **[@MineTech13](https://github.com/MineTech13)** - Complete v2.0 architecture, config flow, device abstraction, and feature development
-- **[@Invisi](https://github.com/Invisi)** - V2.0 development collaboration and testing
+- **[@MineTech13](https://github.com/MineTech13)** - Current maintainer: v2.0 architecture, config flow, device abstraction, V1 support and feature development
+- **[@Invisi](https://github.com/Invisi)** - Development collaboration, dev container and linting setup, testing and release reviews
 
-### Original Foundation
-- **[@jariz](https://github.com/jariz)** - Original basic implementation and BLE communication foundation
-- **[@TCL987](https://github.com/TCL987)** - Early improvements and community contributions
-- **[@Azelphur](https://github.com/Azelphur)** - Patches and compatibility fixes
+### Original Project
+- **[@jariz](https://github.com/jariz)** - Created the original integration and its BLE communication (2021)
+
+### Contributions
+- **[@nikolaychernev](https://github.com/nikolaychernev)** - Moved the integration to Home Assistant's Bluetooth stack after a breaking HA change (2022)
+- **[@TCL987](https://github.com/TCL987)** - Early fixes: longer timeouts and timeout error handling
+- **[@Azelphur](https://github.com/Azelphur)** - Compatibility fix for Home Assistant 2024.1
+- **[@lublak](https://github.com/lublak)** - Availability check
+- **[@LucHeart](https://github.com/LucHeart)** - Options flow fix for newer Home Assistant versions
 
 ### Testing
 - **[@supertin](https://github.com/supertin)** and **[@qfoxb](https://github.com/qfoxb)** - V1 (HTC Vive) testing in [#4](https://github.com/MineTech13/homeassistant-basestation/issues/4)

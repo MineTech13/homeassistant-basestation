@@ -11,9 +11,7 @@
   ],
   "codeowners": [
     "@MineTech13",
-    "@Invisi",
-    "@jariz",
-    "@TCL987"
+    "@Invisi"
   ],
   "config_flow": true,
   "dependencies": [
