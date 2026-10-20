@@ -143,7 +143,7 @@ class BasestationInfoCoordinator(DataUpdateCoordinator):
         try:
             timeout = (self.device.connection_timeout * 4) + 10
             async with asyncio.timeout(timeout):
-                info = await self.device.read_device_info(force=True)
+                info = await self.device.read_device_info()
         except TimeoutError as err:
             if self.device.has_cached_info:
                 _LOGGER.debug("Timeout fetching info, using cached data for %s", self.device.mac)

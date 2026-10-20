@@ -254,13 +254,10 @@ class BasestationDevice(ABC):
         self._is_on = False
         self._available = False
         self._info: dict[BaseStationDeviceInfoKey, str] = {}
-        self._retry_count = 0
         self._last_power_state: int | None = None
         self._last_power_state_update = 0.0
-        self._last_device_info_read = 0.0
         self._device_info_read_success = False
 
-        self._last_connection_attempt = 0.0
         self._consecutive_failures = 0
         # Monotonic time the device last became unavailable, None while available. Starts at setup,
         # since _available starts False, so a station that is unreachable from the start gets its
@@ -513,7 +510,6 @@ class BasestationDevice(ABC):
 
     def _record_connection_success(self) -> None:
         self._consecutive_failures = 0
-        self._retry_count = 0
         self._set_available("operation succeeded", available=True)
         self._last_successful_connection = time.time()
         self._last_error_out_of_slots = False
@@ -521,7 +517,6 @@ class BasestationDevice(ABC):
 
     def _record_connection_failure(self) -> None:
         self._consecutive_failures += 1
-        self._retry_count += 1
         self.connection_log.stats.operation_failed += 1
         if self._consecutive_failures >= UNAVAILABLE_AFTER_CONSECUTIVE_FAILURES:
             self._set_available(f"{self._consecutive_failures} consecutive failures", available=False)
@@ -840,7 +835,6 @@ class BasestationDevice(ABC):
             if is_poll and self._skip_poll_for_cooldown("state read"):
                 return False
 
-            self._last_connection_attempt = time.time()
             max_attempts = MAX_RETRIES if op.retry else 1
 
             for attempt in range(max_attempts):
@@ -1155,17 +1149,8 @@ class BasestationDevice(ABC):
 
         return None
 
-    async def read_device_info(self, /, *, force: bool = False) -> dict[BaseStationDeviceInfoKey, str]:
-        """Read device information characteristics."""
-        current_time = time.time()
-
-        if (
-            not force
-            and self._device_info_read_success
-            and (current_time - self._last_device_info_read < self.info_scan_interval)
-        ):
-            return dict(self._info)
-
+    async def read_device_info(self) -> dict[BaseStationDeviceInfoKey, str]:
+        """Read device information characteristics (BasestationInfoCoordinator sets how often)."""
         lock_timeout = 15.0 if not self._device_info_read_success else 5.0
 
         if not await self._acquire_lock(lock_timeout, "device info read"):
@@ -1188,14 +1173,12 @@ class BasestationDevice(ABC):
                     )
                     await asyncio.sleep(delay)
 
-                self._last_connection_attempt = time.time()
                 info = await self._attempt_device_info_read()
 
                 if info:
                     refresh_failed = False
                     self._info |= info
                     self._record_connection_success()
-                    self._last_device_info_read = current_time
                     self._device_info_read_success = True
                     # The merged view, not just this pass: a read where some characteristics failed
                     # would otherwise blank their sensors until the next full read.
