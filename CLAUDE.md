@@ -47,7 +47,7 @@ coordinator data as entities via `CoordinatorEntity`. `connection_log.py` (in-me
   stale without being reconfirmed by an actual read (`last_power_state_age`) — otherwise a device that
   stopped responding mid-boot would poll at the fast interval forever. Each boot episode is additionally
   capped at `MAX_FAST_POLLING_DURATION` (120s), because a station can keep *answering* `STARTING_UP` for hours
-  (see the 2026-10-01 evening incident below).
+  (see "Fast polling flood" under Known issues below).
 - `BasestationInfoCoordinator` — polls static info (firmware/model/hardware/manufacturer/channel/pair_id) at
   `info_scan_interval` (default 1800s). Falls back to cached info on timeout/error rather than failing the
   update, so slow/flaky reads don't flap the info sensors. Until the first read has succeeded it retries sooner, from
@@ -143,9 +143,11 @@ enabled, the recorder keeps their history far longer than the logs.
 
 ## V1 (HTC Vive) support
 
-Tested by users in [#4](https://github.com/MineTech13/homeassistant-basestation/issues/4) (two stations, ESP32 proxy). Nobody
-on the team owns a V1 station, so anything new for V1 needs a tester. It was developed on the `v1-test` branch (synced by
-merging `dev` in, builds `…-v1test.N` / `2.2.0-v1-test.N`) and squashed into `dev` on 2026-10-19; the tags stay.
+Tested by users in [#4](https://github.com/MineTech13/homeassistant-basestation/issues/4) (supertin, and qfoxb, who reports
+on Discord as pancaix; two stations each, ESP32 proxy). Nobody on the team owns a V1 station, so anything new for V1 needs a
+tester. It was developed on the `v1-test` branch (synced by merging `dev` in, builds `…-v1test.N` / `2.2.0-v1-test.N`),
+squashed into `dev` on 2026-10-19 and released in 2.2.0; the tags stay. The 2.2.0 RC (`v2.2.0-v1-test.005`) was the first
+build with the read-back below, confirmed by qfoxb: on/off confirmed on the first write, and the switch follows BS Companion.
 
 **Protocol** (matches [ShayBox/Lighthouse](https://github.com/ShayBox/Lighthouse), which a user confirmed working):
 - Power characteristic `0000cb01-…` (service `0000cb00`). Command: 20 bytes, `12 00 00 00` (on) / `12 02 00 01` (off), the
@@ -211,13 +213,14 @@ received it. `readback` / `readback_changes` in diagnostics show the raw values.
   `vX.Y.Z-alpha.00N` spelling.
 - Order: lint gate (`ruff format --check . && ruff check . && mypy custom_components/basestation`) → bump
   commit → push `dev` → tag → `gh release create <tag> --prerelease --target dev`.
-- **2.2.0 pre-releases** (the V1 line, now cut from `dev`) keep the V1 test build scheme: `2.2.0-v1-test.N` in
-  `manifest.json`, tag `v2.2.0-v1-test.00N`, N counting on from the `v1-test` builds. `pyproject.toml` must be PEP 440
-  (ruff's RUF200), so it gets `2.2.0a0+v1test.N`; HA and HACS only read the manifest. SemVer sorts `v1-test` above
-  `alpha` and below the final 2.2.0. Don't use `<version>+v1test.N`: build metadata compares equal to the version
-  itself (`2.1.0+v1test.4` == 2.1.0).
-- Stable releases: bump to `X.Y.Z` on `dev`, PR `dev` → `main` (protected, needs one approving review, merge commit),
-  then tag the merge commit on `main` and `gh release create vX.Y.Z --target main` (not a pre-release).
+- The **2.2.0 pre-releases** (the V1 line) used the V1 test build scheme: `2.2.0-v1-test.N` in `manifest.json`, tag
+  `v2.2.0-v1-test.00N`; the last one, `.005`, was the release candidate. `pyproject.toml` must be PEP 440 (ruff's
+  RUF200), so it got `2.2.0a0+v1test.N`; HA and HACS only read the manifest. Don't use `<version>+v1test.N`: build
+  metadata compares equal to the version itself (`2.1.0+v1test.4` == 2.1.0). Note that SemVer sorts `rc` below
+  `v1-test`, so a test line like this can't switch to `-rc.N` midway without HACS treating it as older.
+- Stable releases: bump to `X.Y.Z` on `dev`, PR `dev` → `main` (protected, needs one approving review, merge commit;
+  the maintainer merges as admin, which the protection allows), then tag the merge commit on `main` and
+  `gh release create vX.Y.Z --target main` (not a pre-release).
 - Pre-releases are cut from `dev`. Exception: `v2.1.0-alpha.004` was tagged on the since-deleted `alt-test`
   branch (keep-alive connection reuse + verified-command loop, never merged) — it is not an ancestor of
   `alpha.005` or later, so compare links should go from `alpha.003`.

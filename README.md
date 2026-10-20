@@ -13,18 +13,19 @@ A comprehensive Home Assistant integration for managing **Valve Index® Base Sta
 
 ### 🎮 **Universal VR Lighthouse Support**
 - **Valve Index Base Stations (V2)** - Full feature support
-- **HTC Vive Base Stations (V1)** - On/off, confirmed working by users (see [#4](https://github.com/MineTech13/homeassistant-basestation/issues/4)). Needs the station's pair ID, see below
+- **HTC Vive Base Stations (V1)** - On/off with state tracking, tested by users (see [#4](https://github.com/MineTech13/homeassistant-basestation/issues/4)). Needs the station's pair ID, see [below](#v1-htc-vive-base-stations)
 
 ### 🔄 **Advanced Power Management**
 - **Power Control** - Turn base stations on/off remotely
 - **Standby Mode** - Turns off lasers while keeping motors spinning for short VR breaks, reducing motor wear from excessive spin-ups (V2 only)
-- **Power State Monitoring** - Regular polling-based status tracking (default 60s)
-- **Identify Function** - Blink LEDs to locate specific base stations
+- **Power State Monitoring** - Reads the state regularly (default every 60 s). V2 reports its power state, V1 the last on/off command it received, so changes made with other apps show up too
+- **Verified Commands (V1)** - Every on/off is read back from the station and sent again if it didn't arrive
+- **Identify Function** - Blink LEDs to locate specific base stations (V2 only)
 
 ### 🛠️ **Modern Integration Features**
 - **Automatic Discovery** - Zero-configuration setup via Bluetooth discovery
 - **Config Flow UI** - Complete graphical configuration (no YAML required)
-- **Device Information** - Firmware, model, hardware, and manufacturer details
+- **Device Information** - Firmware, model, hardware, and manufacturer details, also shown on the device page
 - **Multiple Entity Types** - Switches, sensors, and buttons for comprehensive control
 
 ### ⚙️ **Professional Features**
@@ -41,8 +42,8 @@ A comprehensive Home Assistant integration for managing **Valve Index® Base Sta
 This integration communicates directly with your VR base stations using Bluetooth Low Energy (BLE).
 
 - **Direct Connection**: No SteamVR or additional software required. Home Assistant connects directly to the base stations.
-- **State Polling**: The integration periodically polls the base stations to check their power state (Sleep, Standby, On).
-- **Command Queueing**: Commands (like turning on/off) are queued and sent efficiently to minimize connection attempts.
+- **State Polling**: The integration periodically reads the state of each base station: the power state (Sleep, Standby, On) for V2, the last on/off command for V1.
+- **One Connection at a Time**: Polls, info reads and your commands take turns on each station. A poll waiting to retry steps aside for your command.
 - **Auto-Discovery**: Uses Home Assistant's Bluetooth integration to automatically detect nearby base stations.
 
 ---
@@ -109,22 +110,30 @@ scan on
 - **Windows**: Use "Microsoft Bluetooth LE Explorer" from Windows Store
 - **SteamVR**: Check device serial numbers in SteamVR settings
 
-### V1 (HTC Vive) Pair ID
+### V1 (HTC Vive) Base Stations
 
-V1 base stations need their **pair ID** to accept on/off commands: the 8-character ID printed on the back of the
-station (sometimes called BSID), e.g. `1A2B3C4D`. Its last 4 characters also end the station's Bluetooth name
+**Pair ID.** V1 base stations need their pair ID to accept on/off commands: the 8-character ID printed on the back of
+the station (sometimes called BSID), e.g. `1A2B3C4D`. Its last 4 characters also end the station's Bluetooth name
 (`HTC BS …`), which setup uses to reject a mistyped ID. With a wrong ID the station silently ignores commands.
 
-The station also needs a Bluetooth adapter or proxy in range that can **connect** to it: a local adapter or
+**Bluetooth.** The station needs a Bluetooth adapter or proxy in range that can **connect** to it: a local adapter or
 an ESPHome Bluetooth proxy with `active: true`. Passive scanners (e.g. Shelly gateways, ESPHome proxies without
 `active: true`) still list the station in Home Assistant's Bluetooth pages, but can't send it anything. In that case
 the switch stays unavailable and the log shows a warning naming the scanners that see it.
 
-V1 stations can't report whether they are actually on. What they do report is the last on/off command they received,
-and that is what the switch shows. Switching a station with SteamVR or another app (confirmed with BS Companion)
-shows up after the next poll (default every 60 s). After a station lost power it shows as on, assuming it came back on by itself. If a
-command doesn't show up in that read-back, the integration sends it again, and reports an error if it still doesn't
-arrive.
+**State tracking.** V1 stations can't report whether they are actually on. They do remember the last on/off command
+they received, and the integration reads it on every poll (default every 60 s, adjustable as **State Update
+Interval**). The switch shows that:
+
+- **Switching from Home Assistant**: right after the command, the integration reads it back. If the station doesn't
+  show it yet, the command is sent again, 3 tries in total. If it still doesn't arrive, you get an error, most likely
+  because of a wrong pair ID.
+- **Switching with another app**: shows up after the next poll, as long as the app sends the same commands.
+  Confirmed with BS Companion. Commands the integration doesn't recognize leave the switch as it is.
+- **After a power cut**: a station that lost power shows as on, assuming it came back on by itself.
+
+Each poll briefly connects to the station. A station accepts only one connection at a time, so while another app is
+connected to it, Home Assistant has to wait.
 
 ---
 
@@ -136,11 +145,11 @@ Each base station creates multiple entities for comprehensive control:
 - **Power Switch** - Main on/off control
 - **Standby Switch** *(V2 only)* - Standby mode for short breaks (lasers off, motors spinning)
 
-### 📈 **Sensors** *(Optional)*
-- **Firmware Version** - Current firmware information
+### 📈 **Sensors**
+- **Firmware Version** - Current firmware information (V1 stations don't report it)
 - **Model Number** - Device model details
-- **Hardware Version** - Hardware revision
-- **Manufacturer** - Device manufacturer
+- **Hardware Version** - Hardware revision (V1 stations don't report it)
+- **Manufacturer** - Device manufacturer (V1 stations report their Bluetooth chip vendor)
 - **Channel** *(V2 only)* - Communication channel
 - **Power State** *(V2 only)* - Detailed power status
 - **Pair ID** *(V1 only)* - Pair identification
@@ -179,6 +188,14 @@ already rotated away.
 - Close SteamVR or other apps that talk to the base stations. A station only accepts one connection at a time
 - Check range: a closer adapter or an ESPHome Bluetooth proxy in the same room helps most
 - Increase the connection timeout in the device options
+
+**V1: "did not take the command" error:**
+- The station kept reporting its previous command after 3 tries. Check the pair ID against the ID printed on the back
+  of the station; if it is wrong, remove the station and add it again
+
+**V1: switch doesn't follow another app:**
+- Only apps that send the same commands show up (see [V1 (HTC Vive) Base Stations](#v1-htc-vive-base-stations)).
+  The switch catches up the next time you switch the station from Home Assistant
 
 ### ESPHome Bluetooth proxies
 
@@ -222,13 +239,12 @@ logger:
 
 Access advanced settings via **Settings** → **Devices & Services** → **VR Basestation** → **Configure**:
 
-- **Device Name** - Custom friendly name
-- **State Update Interval** - How often the power state is read (default 60 s)
+- **State Update Interval** - How often the state is read (default 60 s). Each read connects to the station
 - **Fast Polling Interval** - Faster state reads while a station boots, capped at 2 minutes (default 5 s, V2 only)
 - **Device Info Scan Interval** - How often firmware, model etc. are read (default 1800 s)
 - **Connection Timeout** - How long to wait for a Bluetooth connection (default 20 s, minimum 10 s)
 
-Leave a field blank to use the default.
+Leave a field blank to use the default. To rename a station, rename its device in Home Assistant.
 
 ### Automation Integration
 
@@ -236,26 +252,26 @@ Leave a field blank to use the default.
 # Example: Turn on base stations when lights turn on
 automation:
   - alias: "VR Room Activated"
-    trigger:
-      - platform: state
+    triggers:
+      - trigger: state
         entity_id: light.vr_room
         to: "on"
-    action:
-      - service: switch.turn_on
+    actions:
+      - action: switch.turn_on
         target:
           entity_id:
             - switch.valve_basestation_1
             - switch.valve_basestation_2
 
-# Example: Auto-standby after 30 minutes of inactivity
+# Example: Auto-standby after 30 minutes of inactivity (V2 only)
   - alias: "VR Auto Standby"
-    trigger:
-      - platform: state
+    triggers:
+      - trigger: state
         entity_id: binary_sensor.vr_room_motion
         to: "off"
         for: "00:30:00"
-    action:
-      - service: switch.turn_on
+    actions:
+      - action: switch.turn_on
         target:
           entity_id:
             - switch.valve_basestation_1_standby_mode
@@ -297,6 +313,9 @@ Transform your VR setup with smart automations:
 - **[@TCL987](https://github.com/TCL987)** - Early improvements and community contributions
 - **[@Azelphur](https://github.com/Azelphur)** - Patches and compatibility fixes
 
+### Testing
+- **[@supertin](https://github.com/supertin)** and **[@qfoxb](https://github.com/qfoxb)** - V1 (HTC Vive) testing in [#4](https://github.com/MineTech13/homeassistant-basestation/issues/4)
+
 ### Technical References
 - **[jeroen1602/lighthouse_pm](https://github.com/jeroen1602/lighthouse_pm)** (GPLv3) - BLE protocol reference, including the V1 (Vive) pairing/power command structure
 - **[ShayBox/Lighthouse](https://github.com/ShayBox/Lighthouse)** (MIT) - Reference for V1 power control that users confirmed working (write timing, matching a station to its pair ID by Bluetooth name)
@@ -315,7 +334,7 @@ Copyright (C) 2026 MineTech13 and contributors.
 ## 📝 Technical Notes
 
 - **BLE Range Limitation** - Bluetooth Low Energy has limited range; consider BLE proxies for extended coverage
-- **Power Management** - V2 base stations support multiple power states (On, Standby, Sleep)
+- **Power Management** - V2 base stations support multiple power states (On, Standby, Sleep), V1 only on and off
 - **Concurrent Access** - Base stations can only be controlled by one application at a time
 - **Firmware Updates** - Update base station firmware through SteamVR for best compatibility
 

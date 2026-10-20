@@ -52,10 +52,13 @@ interval and logs one warning.
 
 V1 stations can't report whether they are actually on, only the last on/off command they received. The switch shows
 that, so:
-- Switching with SteamVR or another app shows up after the next poll, as long as that app sends the same commands.
-  Anything else is ignored and the switch keeps its state.
+- Switching with another app shows up after the next poll, as long as that app sends the same commands (BS Companion
+  does). Anything else is ignored and the switch keeps its state until you switch the station from Home Assistant.
 - After a station lost power it shows as on, which assumes the station came back on by itself.
-- A wrong pair ID can't be detected this way. Setup rejects an ID that doesn't match the station's Bluetooth name.
+- A wrong pair ID can't be detected this way. Setup rejects an ID that doesn't match the station's Bluetooth name. If a
+  command still fails with "did not take the command" after 3 tries, check the pair ID on the back of the station.
+- Every poll connects to the station (default every 60 s). If that is too often for your Bluetooth proxy, raise the
+  **State Update Interval** in the options.
 
 Testing and background: [#4](https://github.com/MineTech13/homeassistant-basestation/issues/4).
 
