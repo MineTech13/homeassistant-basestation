@@ -20,7 +20,7 @@ from homeassistant.const import CONF_MAC
 from homeassistant.util import dt as dt_util
 
 from .const import CONF_PAIR_ID, DOMAIN
-from .device import BasestationDevice, ValveBasestationDevice, ViveBasestationDevice, v1_pair_id_matches_name
+from .device import BasestationDevice, ValveBasestationDevice, ViveBasestationDevice
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -132,10 +132,7 @@ def _device_info(device: BasestationDevice) -> dict[str, Any]:
         data["has_pair_id"] = device.pair_id is not None
         # The pair ID itself is redacted, so report whether it fits the advertised name instead -
         # a typo'd ID is silently ignored by the station and otherwise looks like a working setup.
-        service_info = bluetooth.async_last_service_info(device.hass, device.mac, connectable=False)
-        data["pair_id_matches_name"] = (
-            v1_pair_id_matches_name(device.pair_id, service_info.name) if device.pair_id and service_info else None
-        )
+        data["pair_id_matches_name"] = device.pair_id_matches_name
         data["gatt_services"] = device.gatt_services
         # The power characteristic holds the last command the station received (see decode_v1_readback).
         data["readback"] = _with_age(device.last_readback)

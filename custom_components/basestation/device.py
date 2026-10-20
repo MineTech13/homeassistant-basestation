@@ -408,18 +408,21 @@ class BasestationDevice(ABC):
         """Get the BLE device from the address."""
         return bluetooth.async_ble_device_from_address(self.hass, self.mac)
 
-    def _seen_by_proxies(self) -> list[str]:
+    def _seen_by_proxies(self, *, connectable: bool = True) -> list[str]:
         """
         Return the names of scanners/proxies currently seeing this device's advertisements.
 
         Pulled into the "now unavailable" warning so a proxy-wide problem (one proxy crashing or
         losing Wi-Fi and taking every station behind it down at once) is visible directly in the
         log, rather than only discoverable afterwards by downloading diagnostics from every
-        affected device and cross-referencing them by hand.
+        affected device and cross-referencing them by hand. connectable=False includes passive
+        scanners.
         """
         return [
             scanner_device.scanner.name
-            for scanner_device in bluetooth.async_scanner_devices_by_address(self.hass, self.mac, connectable=True)
+            for scanner_device in bluetooth.async_scanner_devices_by_address(
+                self.hass, self.mac, connectable=connectable
+            )
         ]
 
     async def cleanup(self) -> None:
@@ -1381,6 +1384,17 @@ class ViveBasestationDevice(BasestationDevice):
         return "Vive Basestation"
 
     @property
+    def advertised_name(self) -> str | None:
+        """Return the station's name from HA's last advertisement of it, passive scanners included."""
+        service_info = bluetooth.async_last_service_info(self.hass, self.mac, connectable=False)
+        return service_info.name if service_info else None
+
+    @property
+    def pair_id_matches_name(self) -> bool | None:
+        """Return whether the pair ID fits the advertised name (see v1_pair_id_matches_name), None if unknown."""
+        return v1_pair_id_matches_name(self.pair_id, self.advertised_name) if self.pair_id else None
+
+    @property
     def last_command_confirmed(self) -> bool:
         """Return True if the last command was read back from the station, which also set the state."""
         return self.last_command_result is not None and self.last_command_result["result"] == "confirmed"
@@ -1510,10 +1524,8 @@ class ViveBasestationDevice(BasestationDevice):
         """Warn once if the configured pair ID can't belong to this station (see v1_pair_id_matches_name)."""
         if self._pair_id_checked or not self.pair_id:
             return
-        service_info = bluetooth.async_last_service_info(self.hass, self.mac, connectable=False)
-        name = service_info.name if service_info else None
         # Without a scan response the name is just the address, which says nothing; try again next poll.
-        matches = v1_pair_id_matches_name(self.pair_id, name)
+        matches = self.pair_id_matches_name
         if matches is None:
             return
 
@@ -1525,7 +1537,7 @@ class ViveBasestationDevice(BasestationDevice):
                 "on/off commands. Remove and re-add it with the ID printed on its back",
                 self.mac,
                 f"{self.pair_id:08X}"[-4:],
-                name,
+                self.advertised_name,
             )
 
     def _warn_if_only_passively_seen(self) -> None:
@@ -1540,10 +1552,7 @@ class ViveBasestationDevice(BasestationDevice):
         """
         if self._passive_only_warned:
             return
-        passive_scanners = [
-            scanner_device.scanner.name
-            for scanner_device in bluetooth.async_scanner_devices_by_address(self.hass, self.mac, connectable=False)
-        ]
+        passive_scanners = self._seen_by_proxies(connectable=False)
         if not passive_scanners:
             return
 
