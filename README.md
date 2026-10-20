@@ -121,8 +121,8 @@ an ESPHome Bluetooth proxy with `active: true`. Passive scanners (e.g. Shelly ga
 the switch stays unavailable and the log shows a warning naming the scanners that see it.
 
 V1 stations can't report whether they are actually on. What they do report is the last on/off command they received,
-and that is what the switch shows. Switching a station with SteamVR or another app shows up after the next poll
-(default every 60 s). After a station lost power it shows as on, assuming it came back on by itself. If a
+and that is what the switch shows. Switching a station with SteamVR or another app (confirmed with BS Companion)
+shows up after the next poll (default every 60 s). After a station lost power it shows as on, assuming it came back on by itself. If a
 command doesn't show up in that read-back, the integration sends it again, and reports an error if it still doesn't
 arrive.
 

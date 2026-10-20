@@ -166,7 +166,8 @@ restarts and never contains the pair ID. Used in three ways:
   poll afterwards, so the switch skips it. The outcome goes back per call (a second command can queue meanwhile), with a copy
   in diagnostics as `last_command_result`.
 - Changes from SteamVR or other apps show up on the next poll if they use the same bytes; any other value is "unknown" and
-  leaves the state alone. All zeros counts as on (assumes a station comes up on when it gets power; not confirmed).
+  leaves the state alone. Confirmed with BS Companion (iOS) on both of a tester's stations (2026-10-20, 2.2.0 RC): it
+  leaves the same `00 12 00 00` as our on. All zeros counts as on (assumes a station comes up on when it gets power; not confirmed).
 Not known: whether a command with the wrong pair ID changes the read-back. So a confirmed command only proves the station
 received it. `readback` / `readback_changes` in diagnostics show the raw values.
 
