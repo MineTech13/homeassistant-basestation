@@ -17,12 +17,12 @@
   ],
   "config_flow": true,
   "dependencies": [
-    "bluetooth"
+    "bluetooth_adapters"
   ],
-  "documentation": "https://github.com/minetech13/homeassistant-basestation",
+  "documentation": "https://github.com/MineTech13/homeassistant-basestation",
   "integration_type": "device",
   "iot_class": "local_polling",
-  "issue_tracker": "https://github.com/minetech13/homeassistant-basestation/issues",
+  "issue_tracker": "https://github.com/MineTech13/homeassistant-basestation/issues",
   "requirements": [
     "bleak>=1.0.1",
     "bleak-retry-connector>=4.4.3"
