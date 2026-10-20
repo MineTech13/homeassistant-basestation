@@ -13,7 +13,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, BasestationPowerState
+from .const import BOOTING_STATES, DOMAIN, BasestationPowerState
 from .coordinator import BasestationCoordinator
 from .device import BasestationDevice, ValveBasestationDevice, ViveBasestationDevice
 
@@ -107,13 +107,7 @@ class BasestationSwitch(_BasestationServices, RestoreEntity, SwitchEntity):
             if self._device.last_power_state is None:
                 return False
 
-            active_states = (
-                BasestationPowerState.ON,
-                BasestationPowerState.STANDBY,
-                BasestationPowerState.STARTING_UP,
-                BasestationPowerState.BOOTING_1,
-                BasestationPowerState.BOOTING_2,
-            )
+            active_states = BOOTING_STATES | {BasestationPowerState.ON, BasestationPowerState.STANDBY}
             return self._device.last_power_state in active_states
 
         return self._device.is_on
@@ -121,12 +115,20 @@ class BasestationSwitch(_BasestationServices, RestoreEntity, SwitchEntity):
     async def async_turn_on(self, **_kwargs: Any) -> None:
         """Turn the switch on."""
         await self._device.turn_on()
-        await self.coordinator.async_request_refresh()
+        await self._refresh_after_command()
 
     async def async_turn_off(self, **_kwargs: Any) -> None:
         """Turn the switch off."""
         await self._device.turn_off()
-        await self.coordinator.async_request_refresh()
+        await self._refresh_after_command()
+
+    async def _refresh_after_command(self) -> None:
+        # A V1 command that was read back already took the state from the station over the same
+        # connection. Polling straight away would only cost the proxy another connect.
+        if isinstance(self._device, ViveBasestationDevice) and self._device.last_command_confirmed:
+            self.coordinator.async_update_listeners()
+        else:
+            await self.coordinator.async_request_refresh()
 
 
 class BasestationStandbySwitch(_BasestationServices, SwitchEntity):

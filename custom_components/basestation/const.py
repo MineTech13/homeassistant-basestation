@@ -52,11 +52,25 @@ class BasestationPowerState(IntEnum):
     ON = 0x0B
 
 
+# On its way from standby or sleep to ON. Polled at fast_polling_interval and shown as on.
+BOOTING_STATES = frozenset(
+    {BasestationPowerState.STARTING_UP, BasestationPowerState.BOOTING_1, BasestationPowerState.BOOTING_2}
+)
+
+
 class V1Command(bytes, Enum):
     """Command prefixes for Vive Basestations (V1)."""
 
     TURN_ON = b"\x12\x00\x00\x00"
     TURN_OFF = b"\x12\x02\x00\x01"
+
+
+# What reading the V1 power characteristic returns (first 4 bytes, the rest is zero). It is the last
+# command the station received, not its real state (#4): 0x12 is the command ID and byte 3 the last
+# byte of the command prefix. All zeros means no command since the station powered up.
+V1_READBACK_ON = b"\x00\x12\x00\x00"
+V1_READBACK_OFF = b"\x00\x12\x00\x01"
+V1_READBACK_RESTARTED = b"\x00\x00\x00\x00"
 
 
 class V2Command(bytes, Enum):

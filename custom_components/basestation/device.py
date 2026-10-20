@@ -5,12 +5,13 @@ import logging
 import struct
 import time
 from abc import ABC, abstractmethod
+from collections import deque
 from functools import partial
 from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
 from attr import dataclass
 from bleak.backends.device import BLEDevice
-from bleak.exc import BleakError
+from bleak.exc import BleakCharacteristicNotFoundError, BleakError
 from bleak_retry_connector import (
     BLEAK_OUT_OF_SLOTS_BACKOFF_TIME,
     BleakClientWithServiceCache,
@@ -24,6 +25,7 @@ from homeassistant.helpers.device_registry import CONNECTION_BLUETOOTH, DeviceIn
 
 from .connection_log import ConnectionLog, Outcome, Phase
 from .const import (
+    BOOTING_STATES,
     DEFAULT_CONNECTION_TIMEOUT,
     DEFAULT_INFO_SCAN_INTERVAL,
     DEVICE_TYPE_V1,
@@ -35,6 +37,9 @@ from .const import (
     MODEL_CHARACTERISTIC,
     V1_NAME_PREFIX,
     V1_PWR_CHARACTERISTIC,
+    V1_READBACK_OFF,
+    V1_READBACK_ON,
+    V1_READBACK_RESTARTED,
     V2_CHANNEL_CHARACTERISTIC,
     V2_IDENTIFY_CHARACTERISTIC,
     V2_NAME_PREFIX,
@@ -45,7 +50,7 @@ from .const import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Awaitable, Callable, Iterable
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -55,11 +60,14 @@ MAX_RETRIES = 2
 INFO_READ_RETRIES = 3
 UNAVAILABLE_AFTER_CONSECUTIVE_FAILURES = 3
 
-# V1 has no characteristic to actively read a status from, so unlike V2 its update() poll can't
-# naturally retry/self-heal on its own. Without this, once UNAVAILABLE_AFTER_CONSECUTIVE_FAILURES
-# is hit the device stays unavailable forever, even after it's back in range, until a user happens
-# to send a command that succeeds. This gives it another chance periodically instead.
-UNAVAILABLE_RETRY_COOLDOWN = 300.0
+# A V1 write without response is only queued locally when write_gatt_char() returns, so stay
+# connected this long after it before reading it back or disconnecting (as ShayBox/Lighthouse does).
+V1_SETTLE_DELAY = 1.0
+# A V1 command is checked by reading the power characteristic back (see decode_v1_readback) and
+# rewritten until the station shows it, at most this many writes in total: the three writes V1 always
+# got before the read-back existed. A read-back that fails leaves it at the one write, which is also
+# all ShayBox/Lighthouse sends.
+V1_COMMAND_ATTEMPTS = 3
 
 # A connect attempt we've stopped waiting for is normal and harmless (see _await_connection), but
 # one still running this long afterwards is not: establish_connection() only stays busy that long
@@ -148,6 +156,64 @@ class BLEOperationWrite:
     without_response: bool = False
     repeat_count: int = 1
     repeat_delay: float = 1.0
+    # Time to stay connected after the last write before disconnecting. A write without response
+    # is only queued locally when write_gatt_char() returns; dropping the link straight away can
+    # discard it before it is sent over the air. 0 keeps the previous behavior.
+    settle_delay: float = 0.0
+    # Called with the still-connected client after the writes (and settle_delay). None keeps the
+    # previous behavior.
+    after_write: "Callable[[BleakClientWithServiceCache], Awaitable[None]] | None" = None
+
+
+def build_v1_command(command: V1Command, pair_id: int) -> bytes:
+    """
+    Build the 20-byte V1 power command for a station's pair ID (BSID).
+
+    Byte layout matches ShayBox/Lighthouse's v1_command(), which users report switches V1
+    stations reliably: the 4-byte command prefix, the BSID little-endian (so "AABBCCDD" is sent
+    as DD CC BB AA), then zero padding.
+    """
+    command_bytes = bytearray(20)
+    command_bytes[0:4] = command.value
+    command_bytes[4:8] = struct.pack("<I", pair_id)
+    return bytes(command_bytes)
+
+
+V1Readback = Literal["on", "off", "restarted", "unknown"]
+
+# What the read-back shows once the station has received each command.
+V1_COMMAND_READBACK: dict[V1Command, V1Readback] = {V1Command.TURN_ON: "on", V1Command.TURN_OFF: "off"}
+
+
+def decode_v1_readback(value: bytes) -> V1Readback:
+    """
+    Decode a read of the V1 power characteristic.
+
+    It holds the last command the station received, not its real state (#4). "restarted" means no
+    command since the station powered up. Anything else, e.g. a command another app sent with
+    different bytes, is "unknown".
+    """
+    prefix = bytes(value[:4])
+    if prefix == V1_READBACK_ON:
+        return "on"
+    if prefix == V1_READBACK_OFF:
+        return "off"
+    if prefix == V1_READBACK_RESTARTED and not any(value):
+        return "restarted"
+    return "unknown"
+
+
+def v1_pair_id_matches_name(pair_id: int, name: str | None) -> bool | None:
+    """
+    Check a V1 pair ID against the station's advertised name.
+
+    A V1 station advertises as "HTC BS xxxxxx", ending in the last 4 hex digits of the BSID
+    printed on its back. ShayBox/Lighthouse matches stations to BSIDs this way. Returns None when
+    the name doesn't look like a V1 name, so there's nothing to check against.
+    """
+    if not name or not name.startswith(V1_NAME_PREFIX) or len(name) < len(V1_NAME_PREFIX) + 4:
+        return None
+    return name[-4:].upper() == f"{pair_id:08X}"[-4:]
 
 
 @dataclass(repr=False)
@@ -188,18 +254,23 @@ class BasestationDevice(ABC):
         self._is_on = False
         self._available = False
         self._info: dict[BaseStationDeviceInfoKey, str] = {}
-        self._retry_count = 0
         self._last_power_state: int | None = None
+        # Monotonic, like ValveBasestationDevice's target window: a clock step (NTP on a Pi without a
+        # real-time clock) must not stretch or shrink either.
         self._last_power_state_update = 0.0
-        self._last_device_info_read = 0.0
         self._device_info_read_success = False
 
-        self._last_connection_attempt = 0.0
         self._consecutive_failures = 0
-        self._last_failure_time = 0.0
+        # Monotonic time the device last became unavailable, None while available. Starts at setup,
+        # since _available starts False, so a station that is unreachable from the start gets its
+        # outage measured too.
+        self._unavailable_since: float | None = time.monotonic()
         self._last_successful_connection = 0.0
         self._current_client: BleakClientWithServiceCache | None = None
         self._client_lock = asyncio.Lock()
+        # User commands waiting for _client_lock. Polls and info refreshes stop retrying while there
+        # are any, so a command doesn't wait out their remaining attempts.
+        self._commands_waiting = 0
         self._last_error_out_of_slots = False
         # Monotonic deadline before which polls don't try to connect - see CONNECT_TIMEOUT_COOLDOWN.
         self._connect_cooldown_until = 0.0
@@ -242,7 +313,7 @@ class BasestationDevice(ABC):
         """Return seconds since last_power_state was last confirmed by a read, or None if never set."""
         if self._last_power_state is None:
             return None
-        return time.time() - self._last_power_state_update
+        return time.monotonic() - self._last_power_state_update
 
     @property
     def pending_connect_age(self) -> float | None:
@@ -251,6 +322,16 @@ class BasestationDevice(ABC):
         if attempt is None or attempt.task.done():
             return None
         return time.monotonic() - attempt.started
+
+    @property
+    def poll_timeout(self) -> float:
+        """Return how long BasestationCoordinator lets a state poll run before cancelling it."""
+        return self.connection_timeout * 3 + 10.0
+
+    @property
+    def info_refresh_timeout(self) -> float:
+        """Return how long BasestationInfoCoordinator lets an info refresh run before cancelling it."""
+        return self.connection_timeout * 4 + 10.0
 
     @property
     def connect_cooldown_remaining(self) -> float | None:
@@ -282,8 +363,13 @@ class BasestationDevice(ABC):
 
     @property
     def cached_info(self) -> dict[BaseStationDeviceInfoKey, str]:
-        """Return the cached device information."""
-        return self._info
+        """
+        Return a copy of the cached device information.
+
+        A copy, like everything read_device_info() returns: handed out as is, it becomes the info
+        coordinator's data, which the next read would then change in place.
+        """
+        return dict(self._info)
 
     @property
     def has_cached_info(self) -> bool:
@@ -293,16 +379,21 @@ class BasestationDevice(ABC):
     @property
     def device_info(self) -> DeviceInfo:
         """Return the device info for the registry."""
-        return DeviceInfo(
+        info = DeviceInfo(
             identifiers={(DOMAIN, self.mac)},
             connections={(CONNECTION_BLUETOOTH, self.mac)},
             name=self.device_name,
             manufacturer="Valve" if self.default_name == "Valve Basestation" else "HTC",
             model=self.default_name,
             serial_number=self.mac,
-            sw_version=self.get_info("firmware"),
-            hw_version=self.get_info("hardware"),
         )
+        # Only once read: a None here would overwrite the versions already in the registry on every
+        # reload. BasestationInfoCoordinator writes them after each read.
+        if firmware := self.get_info("firmware"):
+            info["sw_version"] = firmware
+        if hardware := self.get_info("hardware"):
+            info["hw_version"] = hardware
+        return info
 
     @property
     @abstractmethod
@@ -329,18 +420,21 @@ class BasestationDevice(ABC):
         """Get the BLE device from the address."""
         return bluetooth.async_ble_device_from_address(self.hass, self.mac)
 
-    def _seen_by_proxies(self) -> list[str]:
+    def _seen_by_proxies(self, *, connectable: bool = True) -> list[str]:
         """
         Return the names of scanners/proxies currently seeing this device's advertisements.
 
         Pulled into the "now unavailable" warning so a proxy-wide problem (one proxy crashing or
         losing Wi-Fi and taking every station behind it down at once) is visible directly in the
         log, rather than only discoverable afterwards by downloading diagnostics from every
-        affected device and cross-referencing them by hand.
+        affected device and cross-referencing them by hand. connectable=False includes passive
+        scanners.
         """
         return [
             scanner_device.scanner.name
-            for scanner_device in bluetooth.async_scanner_devices_by_address(self.hass, self.mac, connectable=True)
+            for scanner_device in bluetooth.async_scanner_devices_by_address(
+                self.hass, self.mac, connectable=connectable
+            )
         ]
 
     async def cleanup(self) -> None:
@@ -399,16 +493,18 @@ class BasestationDevice(ABC):
         self._available = available
 
         if available:
-            downtime = time.time() - self._last_failure_time if self._last_failure_time else None
+            downtime = time.monotonic() - self._unavailable_since if self._unavailable_since is not None else None
+            self._unavailable_since = None
             self.connection_log.record(Phase.AVAILABILITY, Outcome.AVAILABLE, detail=reason, duration=downtime)
             _LOGGER.info(
                 "Basestation %s is available again (%s)%s",
                 self.mac,
                 reason,
-                f", after {downtime:.0f}s unavailable" if downtime else "",
+                f", after {downtime:.0f}s unavailable" if downtime is not None else "",
             )
             return
 
+        self._unavailable_since = time.monotonic()
         self.connection_log.stats.became_unavailable += 1
         self.connection_log.record(Phase.AVAILABILITY, Outcome.UNAVAILABLE, detail=reason)
 
@@ -429,7 +525,6 @@ class BasestationDevice(ABC):
 
     def _record_connection_success(self) -> None:
         self._consecutive_failures = 0
-        self._retry_count = 0
         self._set_available("operation succeeded", available=True)
         self._last_successful_connection = time.time()
         self._last_error_out_of_slots = False
@@ -437,15 +532,13 @@ class BasestationDevice(ABC):
 
     def _record_connection_failure(self) -> None:
         self._consecutive_failures += 1
-        self._retry_count += 1
-        self._last_failure_time = time.time()
         self.connection_log.stats.operation_failed += 1
         if self._consecutive_failures >= UNAVAILABLE_AFTER_CONSECUTIVE_FAILURES:
             self._set_available(f"{self._consecutive_failures} consecutive failures", available=False)
 
     def _update_power_state(self, state: int) -> None:
         self._last_power_state = state
-        self._last_power_state_update = time.time()
+        self._last_power_state_update = time.monotonic()
         self._is_on = state != 0x00
 
     def _command_failed(self) -> HomeAssistantError:
@@ -471,6 +564,10 @@ class BasestationDevice(ABC):
             )
             if i < op.repeat_count - 1:
                 await asyncio.sleep(op.repeat_delay)
+        if op.settle_delay:
+            await asyncio.sleep(op.settle_delay)
+        if op.after_write:
+            await op.after_write(client)
         return True
 
     async def _execute_single_ble_attempt(
@@ -736,15 +833,24 @@ class BasestationDevice(ABC):
 
     async def async_ble_operation(self, op: BLEOperationRead | BLEOperationWrite) -> bool | bytearray:
         """Execute a BLE operation with proper connection management."""
-        # A user command queued behind a poll has to outlast it, and a poll holds the lock for up to
-        # two attempts of connection_timeout each (a timed-out connect starts the cooldown, which
-        # ends the poll's retries). A fixed wait silently dropped commands at larger timeouts.
-        lock_timeout = 2 * self.connection_timeout + 5.0 if isinstance(op, BLEOperationWrite) else 10.0
-        holder = f"{'write' if isinstance(op, BLEOperationWrite) else 'read'} {op.characteristic_uuid}"
         # Reads are the periodic state poll; writes are user commands, which always get to try.
         is_poll = isinstance(op, BLEOperationRead)
+        # A user command queued behind a poll or an info refresh has to outlast it. Their coordinators
+        # cancel them after poll_timeout / info_refresh_timeout (the longer one), and the disconnect
+        # after that cancel still runs. They stop retrying once a command waits, so the full wait is
+        # only reached when a single attempt hangs. A fixed wait silently dropped commands at larger
+        # timeouts, and 2 x connection_timeout didn't cover an info refresh.
+        lock_timeout = 10.0 if is_poll else self.info_refresh_timeout + 10.0
+        holder = f"{'read' if is_poll else 'write'} {op.characteristic_uuid}"
 
-        if not await self._acquire_lock(lock_timeout, holder):
+        if not is_poll:
+            self._commands_waiting += 1
+        try:
+            acquired = await self._acquire_lock(lock_timeout, holder)
+        finally:
+            if not is_poll:
+                self._commands_waiting -= 1
+        if not acquired:
             return False
 
         try:
@@ -753,7 +859,6 @@ class BasestationDevice(ABC):
             if is_poll and self._skip_poll_for_cooldown("state read"):
                 return False
 
-            self._last_connection_attempt = time.time()
             max_attempts = MAX_RETRIES if op.retry else 1
 
             for attempt in range(max_attempts):
@@ -761,7 +866,7 @@ class BasestationDevice(ABC):
                 if result is not None:
                     return result
 
-                if is_poll and self.connect_cooldown_remaining is not None:
+                if is_poll and (self.connect_cooldown_remaining is not None or self._commands_waiting):
                     break
 
                 if attempt < max_attempts - 1:
@@ -991,6 +1096,7 @@ class BasestationDevice(ABC):
         self, client: BleakClientWithServiceCache, info: dict[BaseStationDeviceInfoKey, str]
     ) -> bool:
         any_read_successful = False
+        first_read = True
 
         for characteristic, key in cast(
             "Iterable[tuple[str, BaseStationDeviceInfoKey]]",
@@ -1006,12 +1112,24 @@ class BasestationDevice(ABC):
                     # V1 pads its model string with NUL bytes ("2.11\0\0\0\0"), which strip() keeps.
                     info[key] = _value.decode("utf-8").replace("\x00", "").strip()
                     any_read_successful = True
+            except BleakCharacteristicNotFoundError:
+                # Looked up in the cached services without going over the link (V1 has no firmware
+                # characteristic), so the next read is still the first one.
+                _LOGGER.debug("Basestation %s has no %s characteristic", self.mac, key)
+                continue
             except BleakError as err:
+                # The first read on this connection (these run before _read_specific_info) failing
+                # this way: a proxy faking the connection. Fail the attempt so the proxy is
+                # penalised, as for a state poll (see _react_to_attempt_failure). Later in the read
+                # it is a real link that dropped, which keeps what was read.
+                if first_read and _is_phantom_connection_error(err):
+                    raise
                 _LOGGER.debug("BLE error reading characteristic %s: %s", key, err)
             except TimeoutError as err:
                 _LOGGER.debug("Timeout reading characteristic %s: %s", key, err)
             except Exception:
                 _LOGGER.exception("Unexpected error reading characteristic %s", key)
+            first_read = False
 
         return any_read_successful
 
@@ -1055,29 +1173,22 @@ class BasestationDevice(ABC):
 
         return None
 
-    async def read_device_info(self, /, *, force: bool = False) -> dict[BaseStationDeviceInfoKey, str]:
-        """Read device information characteristics."""
-        current_time = time.time()
-
-        if (
-            not force
-            and self._device_info_read_success
-            and (current_time - self._last_device_info_read < self.info_scan_interval)
-        ):
-            return self._info
-
+    async def read_device_info(self) -> dict[BaseStationDeviceInfoKey, str]:
+        """Read device information characteristics (BasestationInfoCoordinator sets how often)."""
         lock_timeout = 15.0 if not self._device_info_read_success else 5.0
 
         if not await self._acquire_lock(lock_timeout, "device info read"):
-            return self._info
+            return dict(self._info)
 
+        refresh_failed = False
         try:
             if self._skip_poll_for_cooldown("device info read"):
-                return self._info
+                return dict(self._info)
 
             for attempt in range(INFO_READ_RETRIES):
                 if attempt > 0:
-                    if self.connect_cooldown_remaining is not None:
+                    # A user command waiting for the lock goes first; the next refresh tries again.
+                    if self.connect_cooldown_remaining is not None or self._commands_waiting:
                         break
 
                     delay = (
@@ -1087,22 +1198,27 @@ class BasestationDevice(ABC):
                     )
                     await asyncio.sleep(delay)
 
-                self._last_connection_attempt = time.time()
                 info = await self._attempt_device_info_read()
 
                 if info:
+                    refresh_failed = False
                     self._info |= info
                     self._record_connection_success()
-                    self._last_device_info_read = current_time
                     self._device_info_read_success = True
-                    return info
-
-                self._record_connection_failure()
+                    # The merged view, not just this pass: a read where some characteristics failed
+                    # would otherwise blank their sensors until the next full read.
+                    return dict(self._info)
+                refresh_failed = True
 
         finally:
+            # One failure per refresh, like a state poll. Counting each attempt let a single failed
+            # refresh reach UNAVAILABLE_AFTER_CONSECUTIVE_FAILURES on its own. Here rather than after
+            # the loop, so a refresh the coordinator's timeout cancels after a failed attempt counts too.
+            if refresh_failed:
+                self._record_connection_failure()
             self._release_lock()
 
-        return self._info
+        return dict(self._info)
 
     @abstractmethod
     async def _read_specific_info(
@@ -1156,7 +1272,7 @@ class ValveBasestationDevice(BasestationDevice):
         """
         previous = (self._last_power_state, self._last_power_state_update, self._is_on)
         self._target_power_state = state
-        self._target_state_expires = time.time() + 15.0
+        self._target_state_expires = time.monotonic() + 15.0
         self._update_power_state(state)
         shown_at = self._last_power_state_update
 
@@ -1192,15 +1308,8 @@ class ValveBasestationDevice(BasestationDevice):
         value = await self.async_ble_operation(BLEOperationRead(V2_PWR_CHARACTERISTIC))
         if value and len(value) > 0:
             new_state = value[0]
-            current_time = time.time()
-
-            if self._target_power_state is not None and current_time < self._target_state_expires:
-                active_states = (
-                    BasestationPowerState.STARTING_UP,
-                    BasestationPowerState.BOOTING_1,
-                    BasestationPowerState.BOOTING_2,
-                    BasestationPowerState.ON,
-                )
+            if self._target_power_state is not None and time.monotonic() < self._target_state_expires:
+                active_states = BOOTING_STATES | {BasestationPowerState.ON}
 
                 # Wenn der angestrebte Status oder ein logischer Folgestatus erreicht wurde
                 if new_state == self._target_power_state or (
@@ -1264,113 +1373,293 @@ class ViveBasestationDevice(BasestationDevice):
         self.pair_id = pair_id
         if pair_id is not None:
             self._info["pair_id"] = f"0x{pair_id:08X}"
+        self._pair_id_checked = False
+        self._passive_only_warned = False
+        # GATT layout seen on the last info read, for diagnostics. It shows straight away whether a
+        # station that won't switch exposes the power characteristic at all.
+        self.gatt_services: list[dict[str, Any]] | None = None
+        # For diagnostics: the last read of the power characteristic, the last few reads that changed
+        # it, and how the last command's read-back went.
+        self.last_readback: dict[str, Any] | None = None
+        self.readback_changes: deque[dict[str, Any]] = deque(maxlen=5)
+        self.last_command_result: dict[str, Any] | None = None
 
     @property
     def default_name(self) -> str:
         """Return the default name."""
         return "Vive Basestation"
 
+    @property
+    def advertised_name(self) -> str | None:
+        """Return the station's name from HA's last advertisement of it, passive scanners included."""
+        service_info = bluetooth.async_last_service_info(self.hass, self.mac, connectable=False)
+        return service_info.name if service_info else None
+
+    @property
+    def pair_id_matches_name(self) -> bool | None:
+        """Return whether the pair ID fits the advertised name (see v1_pair_id_matches_name), None if unknown."""
+        return v1_pair_id_matches_name(self.pair_id, self.advertised_name) if self.pair_id else None
+
+    @property
+    def last_command_confirmed(self) -> bool:
+        """Return True if the last command was read back from the station, which also set the state."""
+        return self.last_command_result is not None and self.last_command_result["result"] == "confirmed"
+
     def restore_is_on(self, *, is_on: bool) -> None:
         """
-        Restore the last known on/off state after a restart.
+        Restore the last known on/off state after a restart, until the first poll reads it back.
 
-        V1 has no characteristic to read this back from the hardware, so _is_on is only ever our
-        own best guess from the last command we successfully sent - restoring it is strictly
-        better than the fresh-object default of False, which would otherwise make the switch show
-        "off" for a station that's actually on until the user happens to press it.
+        Better than the fresh-object default of False, which would show a station that's on as off
+        until then. The entity is added after the first poll, so skip it if that poll already read
+        a state: the restored one is older.
         """
+        if self.last_readback is not None and self.last_readback["meaning"] != "unknown":
+            return
         self._is_on = is_on
 
     async def turn_on(self) -> None:
         """Turn on the device."""
-        # Deliberately not early-returning when _is_on already looks True: unlike V2, that flag is
-        # never confirmed by an actual read, so trusting it as a hard gate risks silently
-        # swallowing a legitimate command whenever it's stale (e.g. right after a restart, before
-        # restore_is_on() runs, or if the station was toggled by something other than this
-        # integration). Sending an on/off command the station is already in is harmless.
-        if not self.pair_id:
-            return
-
-        try:
-            command = bytearray(20)
-            command[0:4] = V1Command.TURN_ON.value
-            command[4:8] = struct.pack("<I", int(self.pair_id))
-
-            sent = await self.async_ble_operation(
-                BLEOperationWrite(
-                    V1_PWR_CHARACTERISTIC, bytes(command), without_response=True, repeat_count=3, repeat_delay=1.0
-                )
-            )
-        except (ValueError, struct.error):
-            _LOGGER.exception("Invalid pair_id format for V1 basestation %s", self.mac)
-            return
-        except Exception:
-            _LOGGER.exception("Unexpected error turning on V1 basestation")
-            return
-
-        if not sent:
-            raise self._command_failed()
-        self._is_on = True
+        # Deliberately no early return when _is_on already looks True: it's up to a poll interval
+        # old, and SteamVR or another app may have switched the station since. Sending a command
+        # the station is already in is harmless.
+        await self._send_power_command(V1Command.TURN_ON)
 
     async def turn_off(self) -> None:
         """Turn off the device."""
         # See turn_on() for why this doesn't early-return based on _is_on.
+        await self._send_power_command(V1Command.TURN_OFF)
+
+    async def _send_power_command(self, command: V1Command) -> None:
+        """
+        Send a V1 power command and check that it arrived by reading it back.
+
+        Raises if it never reached the station, or if the station still reports a different last
+        command after V1_COMMAND_ATTEMPTS writes. The read-back only shows that the station received
+        the command: whether one with the wrong pair ID changes it is unknown, which is what
+        _check_pair_id_against_name() is for.
+        """
         if not self.pair_id:
+            _LOGGER.warning("Cannot send %s to V1 basestation %s: no pair ID configured", command.name, self.mac)
             return
 
         try:
-            command = bytearray(20)
-            command[0:4] = V1Command.TURN_OFF.value
-            command[4:8] = struct.pack("<I", int(self.pair_id))
-
-            sent = await self.async_ble_operation(
-                BLEOperationWrite(
-                    V1_PWR_CHARACTERISTIC, bytes(command), without_response=True, repeat_count=3, repeat_delay=1.0
-                )
-            )
+            payload = build_v1_command(command, int(self.pair_id))
         except (ValueError, struct.error):
             _LOGGER.exception("Invalid pair_id format for V1 basestation %s", self.mac)
             return
-        except Exception:
-            _LOGGER.exception("Unexpected error turning off V1 basestation")
-            return
 
+        outcome: dict[str, Any] = {}
+        sent = await self.async_ble_operation(
+            BLEOperationWrite(
+                V1_PWR_CHARACTERISTIC,
+                payload,
+                without_response=True,
+                settle_delay=V1_SETTLE_DELAY,
+                after_write=lambda client: self._verify_power_command(client, command, payload, outcome),
+            )
+        )
+        _LOGGER.debug(
+            "Sent %s to V1 basestation %s: %s", command.name, self.mac, outcome.get("result") if sent else "failed"
+        )
         if not sent:
             raise self._command_failed()
-        self._is_on = False
+
+        if outcome.get("result") == "mismatch":
+            _LOGGER.warning(
+                "V1 basestation %s did not take %s: after %d writes it still reports '%s' as its last command",
+                self.mac,
+                command.name,
+                outcome["writes"],
+                outcome["readback"],
+            )
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="command_not_taken",
+                translation_placeholders={"name": self.device_name, "attempts": str(outcome["writes"])},
+            )
+
+        # Confirmed already set the state from the read-back. Unverified means the write went through
+        # but couldn't be read back, so fall back to the command itself, as before the read-back existed.
+        if outcome.get("result") != "confirmed":
+            self._is_on = command is V1Command.TURN_ON
+
+    async def _verify_power_command(
+        self, client: BleakClientWithServiceCache, command: V1Command, payload: bytes, outcome: dict[str, Any]
+    ) -> None:
+        """
+        Read a just-sent command back, rewriting it until the station reports it (BLEOperationWrite.after_write).
+
+        Fills in outcome, which belongs to this one command: another one can be waiting for the lock
+        meanwhile. last_command_result gets a copy for diagnostics. A read that fails stops it as
+        "unverified" rather than failing the command, since the write itself went through.
+        """
+        expected = V1_COMMAND_READBACK[command]
+        result = "unverified"
+        readback = None
+        writes = 1
+        while True:
+            try:
+                value = bytes(await client.read_gatt_char(V1_PWR_CHARACTERISTIC))
+            except Exception as err:
+                _LOGGER.debug("Could not read %s back from V1 basestation %s: %s", command.name, self.mac, err)
+                result = "unverified"
+                break
+
+            readback = self._apply_readback(value, command.name)
+            if decode_v1_readback(value) == expected:
+                result = "confirmed"
+                break
+            result = "mismatch"
+            if writes >= V1_COMMAND_ATTEMPTS:
+                break
+
+            writes += 1
+            await client.write_gatt_char(V1_PWR_CHARACTERISTIC, payload, response=False)
+            await asyncio.sleep(V1_SETTLE_DELAY)
+
+        outcome |= {
+            "at": time.time(),
+            "command": command.name,
+            "result": result,
+            "writes": writes,
+            "readback": readback,
+        }
+        self.last_command_result = dict(outcome)
+
+    def _check_pair_id_against_name(self) -> None:
+        """Warn once if the configured pair ID can't belong to this station (see v1_pair_id_matches_name)."""
+        if self._pair_id_checked or not self.pair_id:
+            return
+        # Without a scan response the name is just the address, which says nothing; try again next poll.
+        matches = self.pair_id_matches_name
+        if matches is None:
+            return
+
+        self._pair_id_checked = True
+        if not matches:
+            _LOGGER.warning(
+                "The pair ID configured for V1 basestation %s (ending %s) does not match its Bluetooth "
+                "name '%s', which ends in the last 4 characters of its real ID. The station will ignore "
+                "on/off commands. Remove and re-add it with the ID printed on its back",
+                self.mac,
+                f"{self.pair_id:08X}"[-4:],
+                self.advertised_name,
+            )
+
+    def _warn_if_only_passively_seen(self) -> None:
+        """
+        Warn once if the station is only heard by scanners that can't connect to it.
+
+        get_ble_device() only returns a device behind a connectable adapter or proxy. A station
+        heard only by passive scanners (an ESPHome proxy without `active: true`, a Shelly gateway,
+        ...) still shows up in HA's Bluetooth pages, so it looks reachable while no command can
+        ever reach it. _set_available() logs nothing here either: the entry starts out
+        unavailable, so there is no transition. A tester in #4 hit exactly this with no log output.
+        """
+        if self._passive_only_warned:
+            return
+        passive_scanners = self._seen_by_proxies(connectable=False)
+        if not passive_scanners:
+            return
+
+        self._passive_only_warned = True
+        _LOGGER.warning(
+            "V1 basestation %s is only seen by Bluetooth scanners that cannot connect to it (%s), so it "
+            "cannot be switched. It needs a connectable Bluetooth adapter or an ESPHome Bluetooth proxy "
+            "with `active: true` in range",
+            self.mac,
+            ", ".join(passive_scanners),
+        )
 
     async def update(self) -> None:
-        """Update the device state."""
-        # V1 has no readable state characteristic, so advertisement visibility is the only signal
-        # available here - this never performs an actual BLE operation, unlike V2's update(), so
-        # unlike V2 it can't self-heal by simply succeeding on the next poll. Once
-        # _record_connection_failure has marked us unavailable, only give it another chance after
-        # UNAVAILABLE_RETRY_COOLDOWN has passed since the last failure, rather than requiring a
-        # user to happen to send a command that succeeds - otherwise a station that came back into
-        # range would stay marked unavailable indefinitely.
-        try:
-            ble_device = self.get_ble_device()
-            if ble_device is None:
-                self._set_available("no longer advertising to any Bluetooth adapter or proxy", available=False)
-                return
+        """Read the last command the station received, the closest V1 has to a state (see decode_v1_readback)."""
+        self._check_pair_id_against_name()
 
-            if self._consecutive_failures >= UNAVAILABLE_AFTER_CONSECUTIVE_FAILURES:
-                if time.time() - self._last_failure_time < UNAVAILABLE_RETRY_COOLDOWN:
-                    return
-                self._consecutive_failures = 0
+        ble_device = self.get_ble_device()
+        if ble_device is None:
+            # As in ValveBasestationDevice.update(): availability otherwise comes from the read.
+            self._warn_if_only_passively_seen()
+            self._set_available("no longer advertising to any Bluetooth adapter or proxy", available=False)
+            return
 
-            self._set_available("advertising", available=True)
-        except Exception:
-            _LOGGER.exception("Error updating V1 basestation availability")
-            self._set_available("error while checking advertisement visibility", available=False)
+        value = await self.async_ble_operation(BLEOperationRead(V1_PWR_CHARACTERISTIC))
+        if value:
+            self._apply_readback(bytes(value), "poll")
+
+    def _apply_readback(self, value: bytes, source: str) -> str:
+        """
+        Take a read of the power characteristic as the station's state, returning it as hex.
+
+        "restarted" counts as on: a V1 station comes up on when it gets power (assumed, not confirmed
+        in #4). An unknown value, e.g. a command another app sent with different bytes, leaves the
+        state alone. source is "poll" or the command that was just sent.
+        """
+        meaning = decode_v1_readback(value)
+        hex_bytes = [f"{b:02x}" for b in value]
+        # Diagnostics get posted publicly. The read-back has never contained the pair ID, but mask it
+        # in case some firmware echoes the whole command.
+        if self.pair_id and value[4:8] == struct.pack("<I", self.pair_id):
+            hex_bytes[4:8] = ["xx"] * 4
+        hex_value = " ".join(hex_bytes)
+        entry = {"at": time.time(), "source": source, "value": hex_value, "meaning": meaning}
+        changed = self.last_readback is None or self.last_readback["value"] != hex_value
+        self.last_readback = entry
+        if changed:
+            self.readback_changes.append(entry)
+            _LOGGER.debug(
+                "V1 basestation %s power characteristic (%s): %s (%s)", self.mac, source, entry["value"], meaning
+            )
+
+        if meaning != "unknown":
+            is_on = meaning != "off"
+            if source == "poll" and is_on != self._is_on:
+                _LOGGER.debug(
+                    "V1 basestation %s %s outside Home Assistant",
+                    self.mac,
+                    "restarted" if meaning == "restarted" else f"was switched {meaning}",
+                )
+            self._is_on = is_on
+        return hex_value
 
     async def _read_specific_info(
-        self, _client: BleakClientWithServiceCache, info: dict[BaseStationDeviceInfoKey, Any]
+        self, client: BleakClientWithServiceCache, info: dict[BaseStationDeviceInfoKey, Any]
     ) -> bool:
+        self._record_gatt_services(client)
         if self.pair_id:
             info["pair_id"] = f"0x{self.pair_id:08X}"
-            return True
+        # Nothing here came from the station (the pair ID is from the config entry), so it can't
+        # make the read count as a success when every characteristic read failed.
         return False
+
+    def _record_gatt_services(self, client: BleakClientWithServiceCache) -> None:
+        """Keep the station's GATT layout for diagnostics, warning once if the power characteristic is missing."""
+        try:
+            services: list[dict[str, Any]] = [
+                {
+                    "uuid": service.uuid,
+                    "characteristics": [
+                        {"uuid": char.uuid, "properties": list(char.properties)} for char in service.characteristics
+                    ],
+                }
+                for service in client.services
+            ]
+        except Exception as err:
+            _LOGGER.debug("Could not list GATT services of V1 basestation %s: %s", self.mac, err)
+            return
+
+        first_capture = self.gatt_services is None
+        self.gatt_services = services
+        has_power_char = any(
+            char["uuid"].lower() == V1_PWR_CHARACTERISTIC for service in services for char in service["characteristics"]
+        )
+        if first_capture and not has_power_char:
+            _LOGGER.warning(
+                "V1 basestation %s does not expose the power characteristic %s; on/off commands cannot work. "
+                "Please attach this device's diagnostics to "
+                "https://github.com/MineTech13/homeassistant-basestation/issues/4",
+                self.mac,
+                V1_PWR_CHARACTERISTIC,
+            )
 
 
 def get_basestation_device(

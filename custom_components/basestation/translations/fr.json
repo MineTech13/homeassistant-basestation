@@ -19,7 +19,7 @@
       },
       "pair_id": {
         "title": "ID de couplage Vive Basestation",
-        "description": "Entrez l'ID de couplage pour votre station de base Vive \"{device_name}\". Ceci est requis pour contrôler les stations de base V1. L'ID de couplage est généralement une valeur hexadécimale comme '1A2B3C4D'.",
+        "description": "Entrez l'ID de couplage de votre station de base Vive \"{device_name}\". C'est l'ID de 8 caractères imprimé au dos de la station (parfois appelé BSID), ex. '1A2B3C4D'. Ses 4 derniers caractères forment aussi la fin du nom Bluetooth de la station (\"HTC BS ...\"). Avec un ID erroné, la station ignore les commandes marche/arrêt sans aucune erreur.",
         "data": {
           "pair_id": "ID de couplage (hexadécimal)"
         }
@@ -27,7 +27,8 @@
     },
     "error": {
       "invalid_mac": "Format d'adresse MAC invalide. Veuillez utiliser un format comme AA:BB:CC:DD:EE:FF",
-      "invalid_pair_id": "Format d'ID de couplage invalide. Entrez une valeur hexadécimale valide (ex: 1A2B3C4D)",
+      "invalid_pair_id": "ID de couplage invalide. Entrez l'ID hexadécimal de 8 caractères inscrit au dos de la station (ex: 1A2B3C4D)",
+      "pair_id_mismatch": "Cet ID n'appartient pas à cette station de base : ses 4 derniers caractères doivent correspondre à la fin du nom Bluetooth de la station (\"HTC BS ...\"). Vérifiez l'ID au dos de la station",
       "invalid_data": "Données fournies invalides",
       "unknown": "Une erreur inattendue s'est produite"
     },
@@ -51,7 +52,7 @@
         "data_description": {
           "name": "Nom personnalisé pour cet appareil de station de base",
           "info_scan_interval": "Fréquence de lecture des informations de l'appareil comme le firmware et le modèle (minimum 300 secondes). Laissez vide pour utiliser la valeur par défaut ({default_info_scan_interval} secondes).",
-          "power_state_scan_interval": "Fréquence de mise à jour de l'état de l'appareil (minimum 1 seconde, stations de base Valve uniquement). Laissez vide pour utiliser la valeur par défaut ({default_power_state_scan_interval} secondes).",
+          "power_state_scan_interval": "Fréquence de mise à jour de l'état de l'appareil (minimum 1 seconde). Laissez vide pour utiliser la valeur par défaut ({default_power_state_scan_interval} secondes).",
           "fast_polling_interval": "Fréquence de mise à jour de l'état de l'appareil pendant la séquence de démarrage (minimum 1 seconde, stations de base Valve uniquement). Laissez vide pour utiliser la valeur par défaut ({default_fast_polling_interval} secondes).",
           "connection_timeout": "Temps maximum d'attente pour les connexions Bluetooth (minimum 10 secondes). Laissez vide pour utiliser la valeur par défaut ({default_connection_timeout} secondes)."
         }
@@ -123,6 +124,9 @@
   "exceptions": {
     "command_failed": {
       "message": "Impossible d'envoyer la commande à {name}. La station de base n'a pas répondu via Bluetooth."
+    },
+    "command_not_taken": {
+      "message": "{name} n'a pas pris en compte la commande, même après {attempts} tentatives. Vérifiez que son ID de couplage correspond à l'ID imprimé au dos de la station de base."
     },
     "v2_only": {
       "message": "{name} est une station de base Vive (V1). Cette action ne fonctionne qu'avec les stations de base Valve Index (V2)."

@@ -4,8 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A Home Assistant custom integration (HACS) that controls Valve Index (V2) and HTC Vive (V1, untested/WIP —
-see [#4](https://github.com/MineTech13/homeassistant-basestation/issues/4)) VR lighthouse base stations
+A Home Assistant custom integration (HACS) that controls Valve Index (V2) and HTC Vive (V1, tested by users in
+[#4](https://github.com/MineTech13/homeassistant-basestation/issues/4)) VR lighthouse base stations
 directly over Bluetooth Low Energy — no SteamVR required. Domain: `basestation`. Lives entirely under
 `custom_components/basestation/`.
 
@@ -47,18 +47,20 @@ coordinator data as entities via `CoordinatorEntity`. `connection_log.py` (in-me
   stale without being reconfirmed by an actual read (`last_power_state_age`) — otherwise a device that
   stopped responding mid-boot would poll at the fast interval forever. Each boot episode is additionally
   capped at `MAX_FAST_POLLING_DURATION` (120s), because a station can keep *answering* `STARTING_UP` for hours
-  (see the 2026-10-01 evening incident below).
+  (see "Fast polling flood" under Known issues below).
 - `BasestationInfoCoordinator` — polls static info (firmware/model/hardware/manufacturer/channel/pair_id) at
   `info_scan_interval` (default 1800s). Falls back to cached info on timeout/error rather than failing the
-  update, so slow/flaky reads don't flap the info sensors.
+  update, so slow/flaky reads don't flap the info sensors. Until the first read has succeeded it retries sooner, from
+  `INFO_RETRY_INTERVAL` (connect cooldown + 30 s) doubling up to `info_scan_interval`, so a failed first read doesn't
+  leave them `unknown`.
 
 **BLE connection management lives entirely in `device.py`**, in the `BasestationDevice` ABC (subclassed by
 `ValveBasestationDevice` / `ViveBasestationDevice`). All reads/writes go through `async_ble_operation()`,
 which holds a single `asyncio.Lock` per device (`_client_lock`) so state polling, info reads, and user
-commands (turn on/off/standby/identify) never race each other on the same physical connection. V1 has no
-readable state characteristic — `ViveBasestationDevice.update()` infers availability from advertisement
-visibility, and `_is_on` is just tracked locally from the last command sent since there's nothing to read
-back.
+commands (turn on/off/standby/identify) never race each other on the same physical connection. A command
+waits for the lock as long as a poll or info refresh can hold it (`info_refresh_timeout` + 10 s), and those
+stop retrying while a command is waiting (`_commands_waiting`). V1 has no
+readable power state: its poll reads the last command the station received instead (see the V1 section).
 
 **Connections are shared/deduplicated per device**, not per-call: `_await_connection()` reuses one in-flight
 `establish_connection()` task across concurrent-ish callers instead of racing multiple connection attempts
@@ -139,11 +141,55 @@ counted, not stored, and repeats are collapsed over `COLLAPSE_WINDOW` events; wi
 evicts the events that explain a failure within an hour. Six connection-health sensors exist, disabled by default;
 enabled, the recorder keeps their history far longer than the logs.
 
+## V1 (HTC Vive) support
+
+Tested by users in [#4](https://github.com/MineTech13/homeassistant-basestation/issues/4) (supertin, and qfoxb, who reports
+on Discord as pancaix; two stations each, ESP32 proxy). Nobody on the team owns a V1 station, so anything new for V1 needs a
+tester. It was developed on the `v1-test` branch (synced by merging `dev` in, builds `…-v1test.N` / `2.2.0-v1-test.N`),
+squashed into `dev` on 2026-10-19 and released in 2.2.0; the tags stay. The 2.2.0 RC (`v2.2.0-v1-test.005`) was the first
+build with the read-back below, confirmed by qfoxb: on/off confirmed on the first write, and the switch follows BS Companion.
+
+**Protocol** (matches [ShayBox/Lighthouse](https://github.com/ShayBox/Lighthouse), which a user confirmed working):
+- Power characteristic `0000cb01-…` (service `0000cb00`). Command: 20 bytes, `12 00 00 00` (on) / `12 02 00 01` (off), the
+  BSID little-endian (`AABBCCDD` → `DD CC BB AA`), zero padding (`build_v1_command()`). Written without response, then stay
+  connected `V1_SETTLE_DELAY` (1 s): a write without response is only queued locally when `write_gatt_char()` returns.
+- A station silently ignores a command with the wrong ID. `HTC BS xxxxxx` ends in the BSID's last 4 hex digits, so the
+  config flow requires all 8 digits and rejects a mismatch (`v1_pair_id_matches_name()`); existing entries get one WARNING
+  from `update()`, diagnostics show `pair_id_matches_name`.
+
+**Reading `cb01` back** (`decode_v1_readback()`, `V1_READBACK_*`). It is the **last command the station received, not its
+real state**: `00 12 00 00` after on, `00 12 00 01` after off, all zeros after power-up with no command since. It survives HA
+restarts and never contains the pair ID. Used in three ways:
+- `update()` reads it on every state poll, like V2. That also gives V1 real availability from connects, through the shared
+  cooldown / failure / proxy-penalty path. Before, V1 only looked at advertisements, with its own 5-minute retry cooldown.
+- After a command, `_verify_power_command()` (the opt-in `BLEOperationWrite.after_write` hook) reads it back and rewrites
+  until it matches, at most `V1_COMMAND_ATTEMPTS` (3) writes. Still no match → `command_not_taken` (hints at the pair ID). A
+  failed read → "unverified" after one write, and the state is taken from the command as before. A confirmed command needs no
+  poll afterwards, so the switch skips it. The outcome goes back per call (a second command can queue meanwhile), with a copy
+  in diagnostics as `last_command_result`.
+- Changes from SteamVR or other apps show up on the next poll if they use the same bytes; any other value is "unknown" and
+  leaves the state alone. Confirmed with BS Companion (iOS) on both of a tester's stations (2026-10-20, 2.2.0 RC): it
+  leaves the same `00 12 00 00` as our on. All zeros counts as on (assumes a station comes up on when it gets power; not confirmed).
+Not known: whether a command with the wrong pair ID changes the read-back. So a confirmed command only proves the station
+received it. `readback` / `readback_changes` in diagnostics show the raw values.
+
+**Other findings from #4:**
+- HA needs a connectable adapter or proxy (ESPHome `active: true`). With only passive scanners, `get_ble_device()` is None,
+  nothing ever connects, and nothing logged it (the entry starts unavailable, so no transition), hence
+  `_warn_if_only_passively_seen()` and `scanner_count_total` / `seen_by_any` in diagnostics.
+- GATT layout: `cb01` is flagged `read, write` (we still write without response, it works). `180a` has only `2a29` ("Broadcom",
+  the chip vendor), `2a24` (model "2.11", NUL-padded) and `2a23`, so firmware/hardware stay unknown. Unknown service
+  `9e5d1e47-…`, probably firmware update; don't touch it. `gatt_services` in diagnostics, with one WARNING if `cb01` is missing.
+- `cached_info` in diagnostics wasn't redacted before `105592c`, so both testers' pair IDs are public in #4.
+
 ## Conventions
 
 - User-facing strings live in `translations/{en,de,es,fr,it,nl}.json` and must be kept in sync across all
   six — several past commits exist solely to backfill a string that was added to `en.json` but missed in the
   others. Check all six whenever `config_flow.py` option descriptions/errors/keys change.
+- Config entries are at version 1.2. Changes to what an existing entry stores (data or options) go into
+  `async_migrate_entry` in `__init__.py` with a `MINOR_VERSION` bump in `config_flow.py`. A minor bump keeps
+  downgrades working: HA still loads an entry with a newer minor version if the old code has no migration for it.
 - `const.py` has no third-party imports by design (clean separation from `bleak`/HA internals); constants
   that need to reference library internals (e.g. `bleak_retry_connector` timeout values) do so via a comment
   citing the exact constant name rather than importing it there, but `device.py` itself does import
@@ -167,8 +213,14 @@ enabled, the recorder keeps their history far longer than the logs.
   `vX.Y.Z-alpha.00N` spelling.
 - Order: lint gate (`ruff format --check . && ruff check . && mypy custom_components/basestation`) → bump
   commit → push `dev` → tag → `gh release create <tag> --prerelease --target dev`.
-- Stable releases: bump to `X.Y.Z` on `dev`, PR `dev` → `main` (protected, needs one approving review, merge commit),
-  then tag the merge commit on `main` and `gh release create vX.Y.Z --target main` (not a pre-release).
+- The **2.2.0 pre-releases** (the V1 line) used the V1 test build scheme: `2.2.0-v1-test.N` in `manifest.json`, tag
+  `v2.2.0-v1-test.00N`; the last one, `.005`, was the release candidate. `pyproject.toml` must be PEP 440 (ruff's
+  RUF200), so it got `2.2.0a0+v1test.N`; HA and HACS only read the manifest. Don't use `<version>+v1test.N`: build
+  metadata compares equal to the version itself (`2.1.0+v1test.4` == 2.1.0). Note that SemVer sorts `rc` below
+  `v1-test`, so a test line like this can't switch to `-rc.N` midway without HACS treating it as older.
+- Stable releases: bump to `X.Y.Z` on `dev`, PR `dev` → `main` (protected, needs one approving review, merge commit;
+  the maintainer merges as admin, which the protection allows), then tag the merge commit on `main` and
+  `gh release create vX.Y.Z --target main` (not a pre-release).
 - Pre-releases are cut from `dev`. Exception: `v2.1.0-alpha.004` was tagged on the since-deleted `alt-test`
   branch (keep-alive connection reuse + verified-command loop, never merged) — it is not an ancestor of
   `alpha.005` or later, so compare links should go from `alpha.003`.

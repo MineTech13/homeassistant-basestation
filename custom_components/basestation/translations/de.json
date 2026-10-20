@@ -19,7 +19,7 @@
       },
       "pair_id": {
         "title": "Vive Basestation Pair-ID",
-        "description": "Geben Sie die Pair-ID für Ihre Vive Basestation \"{device_name}\" ein. Dies ist erforderlich, um V1 Basestations zu steuern. Die Pair-ID ist typischerweise ein Hexadezimalwert wie '1A2B3C4D'.",
+        "description": "Geben Sie die Pair-ID Ihrer Vive Basestation \"{device_name}\" ein. Das ist die 8-stellige ID auf der Rückseite der Station (manchmal BSID genannt), z.B. '1A2B3C4D'. Ihre letzten 4 Zeichen bilden auch das Ende des Bluetooth-Namens der Station (\"HTC BS ...\"). Mit einer falschen ID ignoriert die Station Ein-/Aus-Befehle ohne Fehlermeldung.",
         "data": {
           "pair_id": "Pair-ID (hexadezimal)"
         }
@@ -27,7 +27,8 @@
     },
     "error": {
       "invalid_mac": "Ungültiges MAC-Adressformat. Bitte verwenden Sie ein Format wie AA:BB:CC:DD:EE:FF",
-      "invalid_pair_id": "Ungültiges Pair-ID-Format. Geben Sie einen gültigen Hexadezimalwert ein (z.B. 1A2B3C4D)",
+      "invalid_pair_id": "Ungültige Pair-ID. Geben Sie die 8-stellige hexadezimale ID von der Rückseite der Station ein (z.B. 1A2B3C4D)",
+      "pair_id_mismatch": "Diese ID gehört nicht zu dieser Basestation: Ihre letzten 4 Zeichen müssen mit dem Ende des Bluetooth-Namens der Station (\"HTC BS ...\") übereinstimmen. Prüfen Sie die ID auf der Rückseite der Station",
       "invalid_data": "Ungültige Daten bereitgestellt",
       "unknown": "Unerwarteter Fehler aufgetreten"
     },
@@ -51,7 +52,7 @@
         "data_description": {
           "name": "Benutzerdefinierter Name für dieses Basestation-Gerät",
           "info_scan_interval": "Wie oft Geräteinformationen wie Firmware und Modell gelesen werden (Minimum 300 Sekunden). Leer lassen, um den Standardwert zu verwenden ({default_info_scan_interval} Sekunden).",
-          "power_state_scan_interval": "Wie oft der Gerätestatus aktualisiert wird - steuert Schalter, Tasten und Sensoren (Minimum 1 Sekunde, nur Valve Basestations). Leer lassen, um den Standardwert zu verwenden ({default_power_state_scan_interval} Sekunden).",
+          "power_state_scan_interval": "Wie oft der Gerätestatus aktualisiert wird - steuert Schalter, Tasten und Sensoren (Minimum 1 Sekunde). Leer lassen, um den Standardwert zu verwenden ({default_power_state_scan_interval} Sekunden).",
           "fast_polling_interval": "Wie oft der Gerätestatus während des Hochfahrens aktualisiert wird (Minimum 1 Sekunde, nur Valve Basestations). Leer lassen, um den Standardwert zu verwenden ({default_fast_polling_interval} Sekunden).",
           "connection_timeout": "Maximale Wartezeit für Bluetooth-Verbindungen (Minimum 10 Sekunden). Leer lassen, um den Standardwert zu verwenden ({default_connection_timeout} Sekunden)."
         }
@@ -123,6 +124,9 @@
   "exceptions": {
     "command_failed": {
       "message": "Der Befehl konnte nicht an {name} gesendet werden. Die Basestation hat über Bluetooth nicht geantwortet."
+    },
+    "command_not_taken": {
+      "message": "{name} hat den Befehl auch nach {attempts} Versuchen nicht übernommen. Prüfen Sie, ob die Pair-ID mit der ID auf der Rückseite der Basestation übereinstimmt."
     },
     "v2_only": {
       "message": "{name} ist eine Vive Basestation (V1). Diese Aktion funktioniert nur mit Valve Index Basestations (V2)."

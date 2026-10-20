@@ -19,7 +19,7 @@
       },
       "pair_id": {
         "title": "Vive Basestation Koppelings-ID",
-        "description": "Voer de koppelings-ID in voor je Vive basestation \"{device_name}\". Dit is vereist om V1-basestations te bedienen. De koppelings-ID is meestal een hexadecimale waarde zoals '1A2B3C4D'.",
+        "description": "Voer de koppelings-ID van je Vive basestation \"{device_name}\" in. Dit is de ID van 8 tekens op de achterkant van het station (soms BSID genoemd), bijv. '1A2B3C4D'. De laatste 4 tekens vormen ook het einde van de Bluetooth-naam van het station (\"HTC BS ...\"). Met een verkeerde ID negeert het station aan/uit-commando's zonder foutmelding.",
         "data": {
           "pair_id": "Koppelings-ID (hexadecimaal)"
         }
@@ -27,7 +27,8 @@
     },
     "error": {
       "invalid_mac": "Ongeldig MAC-adresformaat. Gebruik een formaat zoals AA:BB:CC:DD:EE:FF",
-      "invalid_pair_id": "Ongeldig formaat koppelings-ID. Voer een geldige hexadecimale waarde in (bijv. 1A2B3C4D)",
+      "invalid_pair_id": "Ongeldige koppelings-ID. Voer de hexadecimale ID van 8 tekens van de achterkant van het station in (bijv. 1A2B3C4D)",
+      "pair_id_mismatch": "Deze ID hoort niet bij dit basestation: de laatste 4 tekens moeten overeenkomen met het einde van de Bluetooth-naam van het station (\"HTC BS ...\"). Controleer de ID op de achterkant van het station",
       "invalid_data": "Ongeldige gegevens verstrekt",
       "unknown": "Er is een onverwachte fout opgetreden"
     },
@@ -51,7 +52,7 @@
         "data_description": {
           "name": "Aangepaste naam voor dit basestation-apparaat",
           "info_scan_interval": "Hoe vaak apparaatinformatie zoals firmware en model moet worden gelezen (minimaal 300 seconden). Laat leeg om de standaardwaarde te gebruiken ({default_info_scan_interval} seconden).",
-          "power_state_scan_interval": "Hoe vaak de apparaatstatus moet worden bijgewerkt (minimaal 1 seconde, alleen Valve basestations). Laat leeg om de standaardwaarde te gebruiken ({default_power_state_scan_interval} seconden).",
+          "power_state_scan_interval": "Hoe vaak de apparaatstatus moet worden bijgewerkt (minimaal 1 seconde). Laat leeg om de standaardwaarde te gebruiken ({default_power_state_scan_interval} seconden).",
           "fast_polling_interval": "Hoe vaak de apparaatstatus moet worden bijgewerkt tijdens de opstartsequentie (minimaal 1 seconde, alleen Valve basestations). Laat leeg om de standaardwaarde te gebruiken ({default_fast_polling_interval} seconden).",
           "connection_timeout": "Maximale tijd om te wachten op Bluetooth-verbindingen (minimaal 10 seconden). Laat leeg om de standaardwaarde te gebruiken ({default_connection_timeout} seconden)."
         }
@@ -123,6 +124,9 @@
   "exceptions": {
     "command_failed": {
       "message": "Kon de opdracht niet naar {name} sturen. Het basestation reageerde niet via Bluetooth."
+    },
+    "command_not_taken": {
+      "message": "{name} heeft de opdracht ook na {attempts} pogingen niet overgenomen. Controleer of de koppelings-ID overeenkomt met de ID op de achterkant van het basestation."
     },
     "v2_only": {
       "message": "{name} is een Vive basestation (V1). Deze actie werkt alleen met Valve Index basestations (V2)."

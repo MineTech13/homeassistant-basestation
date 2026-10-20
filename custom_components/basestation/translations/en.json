@@ -19,7 +19,7 @@
       },
       "pair_id": {
         "title": "Vive Basestation Pair ID",
-        "description": "Enter the pair ID for your Vive basestation \"{device_name}\". This is required to control V1 basestations. The pair ID is typically a hexadecimal value like '1A2B3C4D'.",
+        "description": "Enter the pair ID of your Vive base station \"{device_name}\". It is the 8-character ID printed on the back of the station (sometimes called BSID), e.g. '1A2B3C4D'. Its last 4 characters are also the end of the station's Bluetooth name (\"HTC BS ...\"). The station silently ignores on/off commands with a wrong ID.",
         "data": {
           "pair_id": "Pair ID (hexadecimal)"
         }
@@ -27,7 +27,8 @@
     },
     "error": {
       "invalid_mac": "Invalid MAC address format. Please use format like AA:BB:CC:DD:EE:FF",
-      "invalid_pair_id": "Invalid pair ID format. Enter a valid hexadecimal value (e.g., 1A2B3C4D)",
+      "invalid_pair_id": "Invalid pair ID. Enter the 8-character hexadecimal ID from the back of the station (e.g. 1A2B3C4D)",
+      "pair_id_mismatch": "This ID does not belong to this base station: its last 4 characters must match the end of the station's Bluetooth name (\"HTC BS ...\"). Check the ID on the back of the station",
       "invalid_data": "Invalid data provided",
       "unknown": "Unexpected error occurred"
     },
@@ -51,7 +52,7 @@
         "data_description": {
           "name": "Custom name for this basestation device",
           "info_scan_interval": "How often to read device information like firmware and model (minimum 300 seconds). Leave blank to use the default ({default_info_scan_interval} seconds).",
-          "power_state_scan_interval": "How often to update device state - controls switches, buttons, and sensor (minimum 1 second, Valve basestations only). Leave blank to use the default ({default_power_state_scan_interval} seconds).",
+          "power_state_scan_interval": "How often to update device state - controls switches, buttons, and sensor (minimum 1 second). Leave blank to use the default ({default_power_state_scan_interval} seconds).",
           "fast_polling_interval": "How often to update device state during bootup sequence (minimum 1 second, Valve basestations only). Leave blank to use the default ({default_fast_polling_interval} seconds).",
           "connection_timeout": "Maximum time to wait for Bluetooth connections (minimum 10 seconds). Leave blank to use the default ({default_connection_timeout} seconds)."
         }
@@ -123,6 +124,9 @@
   "exceptions": {
     "command_failed": {
       "message": "Could not send the command to {name}. The base station did not respond over Bluetooth."
+    },
+    "command_not_taken": {
+      "message": "{name} did not take the command, even after {attempts} attempts. Check that its pair ID matches the ID printed on the back of the base station."
     },
     "v2_only": {
       "message": "{name} is a Vive base station (V1). This action only works with Valve Index base stations (V2)."

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 import voluptuous as vol
 from homeassistant import config_entries
+from homeassistant.components import bluetooth
 from homeassistant.const import CONF_MAC, CONF_NAME
 from homeassistant.core import callback
 from homeassistant.helpers.device_registry import format_mac
@@ -32,6 +33,7 @@ from .const import (
     V1_NAME_PREFIX,
     V2_NAME_PREFIX,
 )
+from .device import v1_pair_id_matches_name
 
 if TYPE_CHECKING:
     from homeassistant.components.bluetooth import BluetoothServiceInfoBleak
@@ -39,8 +41,10 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
-# Pair ID regex pattern (hexadecimal value)
-PAIR_ID_REGEX = r"^(0x)?[0-9A-Fa-f]{1,8}$"
+# Pair ID regex pattern: the 8 hex digit ID (BSID) printed on the back of a V1 station. Shorter
+# values used to be accepted, but every V1 ID is 8 digits and a truncated one is silently ignored
+# by the station.
+PAIR_ID_REGEX = r"^(0x)?[0-9A-Fa-f]{8}$"
 
 # Six hex pairs separated consistently by ':' or '-', or not at all: exactly the forms format_mac()
 # normalises. It returns anything else unchanged instead of failing, so it can't validate on its own.
@@ -56,6 +60,8 @@ class BasestationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for VR Basestation."""
 
     VERSION = 1
+    # 2: dropped the connection_timeout that 2.0.1 pinned at 10 s, see async_migrate_entry.
+    MINOR_VERSION = 2
 
     def __init__(self) -> None:
         """Initialize the config flow."""
@@ -241,58 +247,22 @@ class BasestationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_pair_id(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Handle Vive basestation pair ID input for V1 devices."""
-        errors = {}
-
         if user_input is None:
-            # Show the pair ID input form
-            return self.async_show_form(
-                step_id="pair_id",
-                data_schema=vol.Schema(
-                    {
-                        vol.Required(CONF_PAIR_ID): str,
-                    },
-                ),
-                description_placeholders={
-                    "device_name": self._selected_name,
-                },
-            )
+            return self._show_pair_id_form()
 
-        pair_id_str = user_input[CONF_PAIR_ID]
+        pair_id_str = user_input[CONF_PAIR_ID].strip()
 
-        # Validate pair ID format (should be hexadecimal)
+        # PAIR_ID_REGEX only accepts hex digits (with an optional "0x" prefix, which int() already
+        # understands), so the int() below can't fail once it matched.
         if not re.match(PAIR_ID_REGEX, pair_id_str):
-            errors[CONF_PAIR_ID] = "invalid_pair_id"
-            return self.async_show_form(
-                step_id="pair_id",
-                data_schema=vol.Schema(
-                    {
-                        vol.Required(CONF_PAIR_ID): str,
-                    },
-                ),
-                errors=errors,
-                description_placeholders={
-                    "device_name": self._selected_name,
-                },
-            )
+            return self._show_pair_id_form({CONF_PAIR_ID: "invalid_pair_id"}, pair_id_str)
+        pair_id = int(pair_id_str, 16)
 
-        # Convert pair ID string to integer. PAIR_ID_REGEX only accepts hex digits (with an
-        # optional "0x" prefix, which int() already understands), so this is always a hex parse.
-        try:
-            pair_id = int(pair_id_str, 16)
-        except ValueError:
-            errors[CONF_PAIR_ID] = "invalid_pair_id"
-            return self.async_show_form(
-                step_id="pair_id",
-                data_schema=vol.Schema(
-                    {
-                        vol.Required(CONF_PAIR_ID): str,
-                    },
-                ),
-                errors=errors,
-                description_placeholders={
-                    "device_name": self._selected_name,
-                },
-            )
+        # A station ignores commands with the wrong ID without any error, so catch a typo here
+        # while the user still has the station in front of them. Only possible if the station is
+        # (or was) advertising; a manually added one that was never seen can't be checked.
+        if v1_pair_id_matches_name(pair_id, self._advertised_name()) is False:
+            return self._show_pair_id_form({CONF_PAIR_ID: "pair_id_mismatch"}, pair_id_str)
 
         # Create the config entry for the V1 basestation
         return self.async_create_entry(
@@ -305,6 +275,21 @@ class BasestationConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 CONF_SETUP_METHOD: SETUP_MANUAL,
             },
         )
+
+    def _show_pair_id_form(self, errors: dict[str, str] | None = None, pair_id: str = "") -> ConfigFlowResult:
+        return self.async_show_form(
+            step_id="pair_id",
+            data_schema=vol.Schema({vol.Required(CONF_PAIR_ID, default=pair_id): str}),
+            errors=errors or {},
+            description_placeholders={"device_name": self._selected_name},
+        )
+
+    def _advertised_name(self) -> str | None:
+        """Return the station's Bluetooth name, from discovery or HA's last seen advertisement."""
+        if self._discovery_info is not None:
+            return self._discovery_info.name
+        service_info = bluetooth.async_last_service_info(self.hass, self._selected_mac, connectable=False)
+        return service_info.name if service_info else None
 
 
 class BasestationOptionsFlow(config_entries.OptionsFlow):
@@ -369,16 +354,17 @@ class BasestationOptionsFlow(config_entries.OptionsFlow):
                 CONF_CONNECTION_TIMEOUT,
                 description={"suggested_value": current_options.get(CONF_CONNECTION_TIMEOUT)},
             ): vol.All(vol.Coerce(int), vol.Range(min=MIN_CONNECTION_TIMEOUT, max=120)),
+            # V1 too: its poll connects to read the last command back, just like a V2 state read.
+            vol.Optional(
+                CONF_POWER_STATE_SCAN_INTERVAL,
+                description={"suggested_value": current_options.get(CONF_POWER_STATE_SCAN_INTERVAL)},
+            ): vol.All(vol.Coerce(int), vol.Range(min=1, max=300)),
         }
 
-        # Add V2-specific options
+        # Only V2 reports boot states to poll faster for.
         if device_type == DEVICE_TYPE_V2:
             schema_dict.update(
                 {
-                    vol.Optional(
-                        CONF_POWER_STATE_SCAN_INTERVAL,
-                        description={"suggested_value": current_options.get(CONF_POWER_STATE_SCAN_INTERVAL)},
-                    ): vol.All(vol.Coerce(int), vol.Range(min=1, max=300)),
                     vol.Optional(
                         CONF_FAST_POLLING_INTERVAL,
                         description={"suggested_value": current_options.get(CONF_FAST_POLLING_INTERVAL)},
