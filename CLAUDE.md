@@ -57,7 +57,9 @@ coordinator data as entities via `CoordinatorEntity`. `connection_log.py` (in-me
 **BLE connection management lives entirely in `device.py`**, in the `BasestationDevice` ABC (subclassed by
 `ValveBasestationDevice` / `ViveBasestationDevice`). All reads/writes go through `async_ble_operation()`,
 which holds a single `asyncio.Lock` per device (`_client_lock`) so state polling, info reads, and user
-commands (turn on/off/standby/identify) never race each other on the same physical connection. V1 has no
+commands (turn on/off/standby/identify) never race each other on the same physical connection. A command
+waits for the lock as long as a poll or info refresh can hold it (`info_refresh_timeout` + 10 s), and those
+stop retrying while a command is waiting (`_commands_waiting`). V1 has no
 readable power state: its poll reads the last command the station received instead (see the V1 section).
 
 **Connections are shared/deduplicated per device**, not per-call: `_await_connection()` reuses one in-flight

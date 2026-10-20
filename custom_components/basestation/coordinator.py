@@ -60,8 +60,7 @@ class BasestationCoordinator(DataUpdateCoordinator):
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from the device."""
         try:
-            timeout = (self.device.connection_timeout * 3) + 10
-            async with asyncio.timeout(timeout):
+            async with asyncio.timeout(self.device.poll_timeout):
                 await self.device.update()
         except TimeoutError as err:
             msg = f"Timeout communicating with basestation {self.device.mac}"
@@ -141,8 +140,7 @@ class BasestationInfoCoordinator(DataUpdateCoordinator):
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch static info from the device."""
         try:
-            timeout = (self.device.connection_timeout * 4) + 10
-            async with asyncio.timeout(timeout):
+            async with asyncio.timeout(self.device.info_refresh_timeout):
                 info = await self.device.read_device_info()
         except TimeoutError as err:
             if self.device.has_cached_info:

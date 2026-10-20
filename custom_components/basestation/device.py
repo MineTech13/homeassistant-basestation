@@ -268,6 +268,9 @@ class BasestationDevice(ABC):
         self._last_successful_connection = 0.0
         self._current_client: BleakClientWithServiceCache | None = None
         self._client_lock = asyncio.Lock()
+        # User commands waiting for _client_lock. Polls and info refreshes stop retrying while there
+        # are any, so a command doesn't wait out their remaining attempts.
+        self._commands_waiting = 0
         self._last_error_out_of_slots = False
         # Monotonic deadline before which polls don't try to connect - see CONNECT_TIMEOUT_COOLDOWN.
         self._connect_cooldown_until = 0.0
@@ -319,6 +322,16 @@ class BasestationDevice(ABC):
         if attempt is None or attempt.task.done():
             return None
         return time.monotonic() - attempt.started
+
+    @property
+    def poll_timeout(self) -> float:
+        """Return how long BasestationCoordinator lets a state poll run before cancelling it."""
+        return self.connection_timeout * 3 + 10.0
+
+    @property
+    def info_refresh_timeout(self) -> float:
+        """Return how long BasestationInfoCoordinator lets an info refresh run before cancelling it."""
+        return self.connection_timeout * 4 + 10.0
 
     @property
     def connect_cooldown_remaining(self) -> float | None:
@@ -820,15 +833,24 @@ class BasestationDevice(ABC):
 
     async def async_ble_operation(self, op: BLEOperationRead | BLEOperationWrite) -> bool | bytearray:
         """Execute a BLE operation with proper connection management."""
-        # A user command queued behind a poll has to outlast it, and a poll holds the lock for up to
-        # two attempts of connection_timeout each (a timed-out connect starts the cooldown, which
-        # ends the poll's retries). A fixed wait silently dropped commands at larger timeouts.
-        lock_timeout = 2 * self.connection_timeout + 5.0 if isinstance(op, BLEOperationWrite) else 10.0
-        holder = f"{'write' if isinstance(op, BLEOperationWrite) else 'read'} {op.characteristic_uuid}"
         # Reads are the periodic state poll; writes are user commands, which always get to try.
         is_poll = isinstance(op, BLEOperationRead)
+        # A user command queued behind a poll or an info refresh has to outlast it. Their coordinators
+        # cancel them after poll_timeout / info_refresh_timeout (the longer one), and the disconnect
+        # after that cancel still runs. They stop retrying once a command waits, so the full wait is
+        # only reached when a single attempt hangs. A fixed wait silently dropped commands at larger
+        # timeouts, and 2 x connection_timeout didn't cover an info refresh.
+        lock_timeout = 10.0 if is_poll else self.info_refresh_timeout + 10.0
+        holder = f"{'read' if is_poll else 'write'} {op.characteristic_uuid}"
 
-        if not await self._acquire_lock(lock_timeout, holder):
+        if not is_poll:
+            self._commands_waiting += 1
+        try:
+            acquired = await self._acquire_lock(lock_timeout, holder)
+        finally:
+            if not is_poll:
+                self._commands_waiting -= 1
+        if not acquired:
             return False
 
         try:
@@ -844,7 +866,7 @@ class BasestationDevice(ABC):
                 if result is not None:
                     return result
 
-                if is_poll and self.connect_cooldown_remaining is not None:
+                if is_poll and (self.connect_cooldown_remaining is not None or self._commands_waiting):
                     break
 
                 if attempt < max_attempts - 1:
@@ -1165,7 +1187,8 @@ class BasestationDevice(ABC):
 
             for attempt in range(INFO_READ_RETRIES):
                 if attempt > 0:
-                    if self.connect_cooldown_remaining is not None:
+                    # A user command waiting for the lock goes first; the next refresh tries again.
+                    if self.connect_cooldown_remaining is not None or self._commands_waiting:
                         break
 
                     delay = (
