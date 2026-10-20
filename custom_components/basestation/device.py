@@ -255,6 +255,8 @@ class BasestationDevice(ABC):
         self._available = False
         self._info: dict[BaseStationDeviceInfoKey, str] = {}
         self._last_power_state: int | None = None
+        # Monotonic, like ValveBasestationDevice's target window: a clock step (NTP on a Pi without a
+        # real-time clock) must not stretch or shrink either.
         self._last_power_state_update = 0.0
         self._device_info_read_success = False
 
@@ -308,7 +310,7 @@ class BasestationDevice(ABC):
         """Return seconds since last_power_state was last confirmed by a read, or None if never set."""
         if self._last_power_state is None:
             return None
-        return time.time() - self._last_power_state_update
+        return time.monotonic() - self._last_power_state_update
 
     @property
     def pending_connect_age(self) -> float | None:
@@ -523,7 +525,7 @@ class BasestationDevice(ABC):
 
     def _update_power_state(self, state: int) -> None:
         self._last_power_state = state
-        self._last_power_state_update = time.time()
+        self._last_power_state_update = time.monotonic()
         self._is_on = state != 0x00
 
     def _command_failed(self) -> HomeAssistantError:
@@ -1247,7 +1249,7 @@ class ValveBasestationDevice(BasestationDevice):
         """
         previous = (self._last_power_state, self._last_power_state_update, self._is_on)
         self._target_power_state = state
-        self._target_state_expires = time.time() + 15.0
+        self._target_state_expires = time.monotonic() + 15.0
         self._update_power_state(state)
         shown_at = self._last_power_state_update
 
@@ -1283,9 +1285,7 @@ class ValveBasestationDevice(BasestationDevice):
         value = await self.async_ble_operation(BLEOperationRead(V2_PWR_CHARACTERISTIC))
         if value and len(value) > 0:
             new_state = value[0]
-            current_time = time.time()
-
-            if self._target_power_state is not None and current_time < self._target_state_expires:
+            if self._target_power_state is not None and time.monotonic() < self._target_state_expires:
                 active_states = BOOTING_STATES | {BasestationPowerState.ON}
 
                 # Wenn der angestrebte Status oder ein logischer Folgestatus erreicht wurde
