@@ -99,7 +99,8 @@ read it with `git show v2.1.0-alpha.008:CLAUDE.md` or in the history of this fil
   `Connecting`). The station is then connected to the proxy, stops advertising, and disappears from every proxy
   (`seen_by: []`) until that proxy is restarted (once it cleared on its own after ~6 h). Often a second station goes into the fake-connection mode on the
   same proxy within a minute (`Timeout waiting for teardown, forcing IDLE` loop). All attributed cases sat on one
-  heavily loaded proxy (an NSPanel); a dedicated ESP32 proxy replacing it is being tested.
+  heavily loaded proxy (an NSPanel). Since it stopped proxying, the maintainer's four stations have been stable, all
+  through a single ESPHome device at the door with weak signal (no dedicated proxy yet); #7 was closed on 2026-10-20.
 - **ESP32 proxy crash (outside our reach).** One proxy hard-crashed in Bluedroid while serving a GATT read
   (`LoadStoreError` via `esp_ble_gattc_read_char`). Proxy-restart errors (`ConnectionState.` / `not ready yet`,
   `PROXY_RESTARTING_MARKERS`) are counted separately. They are matched by message text, because bleak_esphome turns
